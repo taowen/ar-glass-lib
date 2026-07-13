@@ -31,7 +31,7 @@ class MainActivity : Activity(), ArGlassesListener {
         content.removeViews(2, (content.childCount - 2).coerceAtLeast(0))
         val glasses = devices.firstOrNull()
         if (glasses == null) {
-            status.text = "请通过 USB-C 插入 AR 眼镜\n\n当前首个支持型号：XREAL Air 2 Ultra"
+            status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra、VITURE Beast"
             content.addView(Button(this).apply { text = "重新扫描"; setOnClickListener { manager.scan() } }, margins(top = 20))
             return
         }

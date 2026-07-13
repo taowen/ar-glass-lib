@@ -1,6 +1,7 @@
 package com.taowen.arglass
 
 import android.hardware.usb.UsbDevice
+import com.taowen.arglass.driver.GlassesDriverRegistry
 
 enum class GlassesCapability { IMU, DISPLAY_MODE, DISPLAY_RESOLUTION }
 
@@ -20,8 +21,8 @@ data class GlassesModel(
     val usbVendorId: Int,
     val usbProductId: Int,
     val capabilities: Set<GlassesCapability>,
-    internal val imuInterface: Int,
-    internal val mcuInterface: Int,
+    val supportedDisplayModes: Set<DisplayMode>,
+    internal val driverId: String,
 ) {
     val displayName: String get() = "$manufacturer $model"
 }
@@ -36,23 +37,5 @@ data class ImuSample(
 )
 
 object ArGlassesCatalog {
-    private val xrealAir2Ultra = GlassesModel(
-        id = "xreal_air_2_ultra",
-        manufacturer = "XREAL",
-        model = "Air 2 Ultra",
-        usbVendorId = 0x3318,
-        usbProductId = 0x0426,
-        capabilities = setOf(
-            GlassesCapability.IMU,
-            GlassesCapability.DISPLAY_MODE,
-            GlassesCapability.DISPLAY_RESOLUTION,
-        ),
-        imuInterface = 1,
-        mcuInterface = 0,
-    )
-
-    fun identify(device: UsbDevice): GlassesModel? = when {
-        device.vendorId == xrealAir2Ultra.usbVendorId && device.productId == xrealAir2Ultra.usbProductId -> xrealAir2Ultra
-        else -> null
-    }
+    fun identify(device: UsbDevice): GlassesModel? = GlassesDriverRegistry.identify(device)
 }

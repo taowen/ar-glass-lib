@@ -1,6 +1,11 @@
 # ar-glass-lib
 
-Android library and standalone check app for USB-C AR glasses. The first supported model is **XREAL Air 2 Ultra** (`3318:0426`, Flora).
+Android library and standalone check app for USB-C AR glasses.
+
+Supported models:
+
+- **XREAL Air 2 Ultra** (`3318:0426`, Flora)
+- **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 
 ## Capabilities
 
@@ -17,6 +22,8 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
+
+Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
 
 ## Build
 
@@ -48,6 +55,14 @@ target_link_libraries(your_jni_target PRIVATE ar_glass)
 ```
 
 The public native surface provides XREAL MCU/IMU packet construction and versioned IMU decoding without requiring the standalone JNI adapter.
+
+## VITURE Beast protocol notes
+
+- USB controller identities: VID `0x35CA`, PID `0x1201` or `0x1211`.
+- Gen2 V2 packets use a `10 00` header, little-endian message ID and payload length, and a 16-bit payload checksum.
+- RAW IMU starts with message `0x0301` and payload `02 02` (120 Hz); reports use message `0x7309`.
+- `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
+- The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
 
 ## XREAL Air 2 Ultra protocol notes
 
