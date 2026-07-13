@@ -8,6 +8,7 @@ import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.viture.beast.VitureBeastDriver
 import com.taowen.arglass.driver.luci.LuciDriver
+import com.taowen.arglass.driver.rokid.air.RokidAirDriver
 import com.taowen.arglass.driver.xreal.air2ultra.XrealAir2UltraDriver
 import com.taowen.arglass.driver.xreal.xbxa01.XrealXbxA01Driver
 import com.taowen.arglass.driver.xreal.xbxa01plus.XrealXbxA01PlusDriver
@@ -39,6 +40,7 @@ internal object GlassesDriverRegistry {
         XrealXbxA01Driver,
         XrealXbxA01PlusDriver,
         XrealOneSDriver,
+        RokidAirDriver,
         VitureBeastDriver,
         LuciDriver,
     )

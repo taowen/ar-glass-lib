@@ -8,6 +8,7 @@ Supported models:
 - **XREAL XBX A01** (`3318:0440`, Helen)
 - **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
 - **XREAL One S** (`3318:043E`, GS)
+- **Rokid Air / Max** (`04D2:162F`)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
 
@@ -109,3 +110,10 @@ Protocol behavior was adapted from the open-source `android-sensor-probe` projec
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
 - The stream is reassembled into 84-byte frames and exposes acceleration, angular velocity, and the device timestamp in Android-oriented coordinates.
 - The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
+
+## Rokid Air / Max protocol notes
+
+- Both models use USB identity `04D2:162F`; the USB product string distinguishes Max, with Air as the fallback.
+- IMU, magnetometer, keys, and proximity reports arrive passively on interrupt endpoint `0x82`.
+- Display-mode vendor control transfers query and switch mirrored 2D, Full SBS 3D, high-refresh 2D, and high-refresh SBS 3D.
+- The implementation follows the MIT-licensed `ar-drivers-rs` Rokid driver and its Android port in `android-sensor-probe`.
