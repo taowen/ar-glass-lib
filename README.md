@@ -10,7 +10,13 @@ Android library and standalone check app for USB-C AR glasses. The first support
 - Inspect the resolution and refresh rate exposed by Android for the external display.
 - Reuse the protocol implementation from Kotlin/Java or link the native `ar_glass` CMake target directly into another JNI library.
 
-The `library` module is the reusable API. The `app` module is an independently installable, framework-Views diagnostic UI that waits for glasses, identifies them, and lets the user run each check explicitly. Display mode commands are never sent during passive detection.
+The `library` module is the reusable API. The `app` module is an independently installable, framework-Views diagnostic UI that waits for glasses, identifies them, and lets the user run each check explicitly. Each check has its own Activity and implementation:
+
+- `ImuCheckActivity`: opens only the IMU interface and validates its stream.
+- `DisplayModeCheckActivity`: opens only the MCU interface for 2D/3D queries and switches.
+- `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
+
+The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
 ## Build
 

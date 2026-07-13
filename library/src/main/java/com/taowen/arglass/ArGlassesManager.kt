@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 data class ConnectedGlasses(val device: UsbDevice, val model: GlassesModel)
 data class DisplayResolution(val displayId: Int, val name: String, val width: Int, val height: Int, val refreshRate: Float)
+enum class SessionFeature { IMU, DISPLAY_MODE, ALL }
 
 interface ArGlassesListener {
     fun onDevicesChanged(devices: List<ConnectedGlasses>) {}
@@ -78,11 +79,11 @@ class ArGlassesManager(
         usbManager.requestPermission(device, pendingIntent)
     }
 
-    fun open(device: UsbDevice): ArGlassesSession {
+    fun open(device: UsbDevice, feature: SessionFeature = SessionFeature.ALL): ArGlassesSession {
         require(usbManager.hasPermission(device)) { "USB permission has not been granted" }
         val model = requireNotNull(ArGlassesCatalog.identify(device)) { "Unsupported AR glasses" }
         session?.close()
-        return ArGlassesSession(usbManager, device, model, executor, listener).also { session = it }
+        return ArGlassesSession(usbManager, device, model, feature, executor, listener).also { session = it }
     }
 
     fun externalDisplayResolutions(): List<DisplayResolution> =
@@ -110,28 +111,32 @@ class ArGlassesSession internal constructor(
     usbManager: UsbManager,
     val device: UsbDevice,
     val model: GlassesModel,
+    private val feature: SessionFeature,
     private val executor: Executor,
     private val listener: ArGlassesListener,
 ) : Closeable {
     private val running = AtomicBoolean(true)
     private val connection: UsbDeviceConnection = requireNotNull(usbManager.openDevice(device)) { "Cannot open USB device" }
-    private val imuInterface = findInterface(model.imuInterface)
-    private val mcuInterface = findInterface(model.mcuInterface)
-    private val imuIn = requireEndpoint(imuInterface, UsbConstants.USB_DIR_IN)
-    private val imuOut = requireEndpoint(imuInterface, UsbConstants.USB_DIR_OUT)
-    private val mcuIn = requireEndpoint(mcuInterface, UsbConstants.USB_DIR_IN)
-    private val mcuOut = requireEndpoint(mcuInterface, UsbConstants.USB_DIR_OUT)
-    private val worker = Thread(::runImu, "ar-glass-imu")
+    private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
+    private val displayModeEnabled = feature == SessionFeature.DISPLAY_MODE || feature == SessionFeature.ALL
+    private val imuInterface = if (imuEnabled) findInterface(model.imuInterface) else null
+    private val mcuInterface = if (displayModeEnabled) findInterface(model.mcuInterface) else null
+    private val imuIn = imuInterface?.let { requireEndpoint(it, UsbConstants.USB_DIR_IN) }
+    private val imuOut = imuInterface?.let { requireEndpoint(it, UsbConstants.USB_DIR_OUT) }
+    private val mcuIn = mcuInterface?.let { requireEndpoint(it, UsbConstants.USB_DIR_IN) }
+    private val mcuOut = mcuInterface?.let { requireEndpoint(it, UsbConstants.USB_DIR_OUT) }
+    private val worker = if (imuEnabled) Thread(::runImu, "ar-glass-imu") else null
     private var requestId = 1
 
     init {
-        check(connection.claimInterface(mcuInterface, true)) { "Cannot claim XREAL MCU interface ${mcuInterface.id}" }
-        check(connection.claimInterface(imuInterface, true)) { "Cannot claim XREAL IMU interface ${imuInterface.id}" }
-        worker.start()
+        mcuInterface?.let { check(connection.claimInterface(it, true)) { "Cannot claim XREAL MCU interface ${it.id}" } }
+        imuInterface?.let { check(connection.claimInterface(it, true)) { "Cannot claim XREAL IMU interface ${it.id}" } }
+        worker?.start()
     }
 
     @Synchronized
     fun queryDisplayMode(): DisplayMode? {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
         val response = mcuCommand(0x07)
         val value = when {
             response.size >= 27 -> ByteBuffer.wrap(response, 23, 4).order(ByteOrder.LITTLE_ENDIAN).int
@@ -142,8 +147,11 @@ class ArGlassesSession internal constructor(
     }
 
     @Synchronized
-    fun setDisplayMode(mode: DisplayMode): Boolean = mcuCommand(0x08, byteArrayOf(mode.wireValue.toByte())).let {
+    fun setDisplayMode(mode: DisplayMode): Boolean {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
+        return mcuCommand(0x08, byteArrayOf(mode.wireValue.toByte())).let {
         it.size >= 23 && (it[22].toInt() and 0xff) == 0
+        }
     }
 
     private fun runImu() {
@@ -154,9 +162,10 @@ class ArGlassesSession internal constructor(
             imuCommand(0x1a)
             val started = imuCommand(0x19, byteArrayOf(1))
             if (started.isEmpty()) status("IMU 启动命令未收到响应；继续被动监听") else status("IMU 已启动")
-            val packet = ByteArray(maxOf(64, imuIn.maxPacketSize))
+            val input = requireNotNull(imuIn)
+            val packet = ByteArray(maxOf(64, input.maxPacketSize))
             while (running.get()) {
-                val length = connection.bulkTransfer(imuIn, packet, packet.size, 750)
+                val length = connection.bulkTransfer(input, packet, packet.size, 750)
                 if (length != 64) continue
                 decodeSample(packet.copyOf(length))?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
@@ -184,15 +193,17 @@ class ArGlassesSession internal constructor(
 
     private fun imuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray = synchronized(connection) {
         val packet = NativeBridge.makeImuCommand(command, payload)
-        if (connection.bulkTransfer(imuOut, packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
-        readMatching(imuIn, 0xaa, command)
+        val output = requireNotNull(imuOut)
+        if (connection.bulkTransfer(output, packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
+        readMatching(requireNotNull(imuIn), 0xaa, command)
     }
 
     private fun mcuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray = synchronized(connection) {
         val id = requestId++
         val packet = NativeBridge.makeMcuCommand(command, id, payload)
-        if (connection.bulkTransfer(mcuOut, packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
-        readMatching(mcuIn, 0xfd, command, id)
+        val output = requireNotNull(mcuOut)
+        if (connection.bulkTransfer(output, packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
+        readMatching(requireNotNull(mcuIn), 0xfd, command, id)
     }
 
     private fun readMatching(endpoint: UsbEndpoint, magic: Int, command: Int, id: Int? = null): ByteArray {
@@ -232,10 +243,10 @@ class ArGlassesSession internal constructor(
 
     override fun close() {
         if (!running.getAndSet(false)) return
-        worker.interrupt()
-        if (Thread.currentThread() !== worker) worker.join(1200)
-        connection.releaseInterface(imuInterface)
-        connection.releaseInterface(mcuInterface)
+        worker?.interrupt()
+        if (worker != null && Thread.currentThread() !== worker) worker.join(1200)
+        imuInterface?.let(connection::releaseInterface)
+        mcuInterface?.let(connection::releaseInterface)
         connection.close()
     }
 }

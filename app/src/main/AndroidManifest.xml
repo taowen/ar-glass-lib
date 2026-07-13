@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
     <application android:theme="@style/AppTheme" android:label="AR Glass Check">
+        <activity android:name=".ImuCheckActivity" android:exported="false" />
+        <activity android:name=".DisplayModeCheckActivity" android:exported="false" />
+        <activity android:name=".ResolutionCheckActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
