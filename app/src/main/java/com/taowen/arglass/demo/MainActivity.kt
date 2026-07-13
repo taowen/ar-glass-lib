@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.taowen.arglass.ArGlassesDiagnostics
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.ArGlassesManager
 import com.taowen.arglass.ConnectedGlasses
@@ -23,13 +24,17 @@ class MainActivity : Activity(), ArGlassesListener {
         content.addView(label("AR Glass Check", 26f, true))
         status = label("请通过 USB-C 插入 AR 眼镜", 16f)
         content.addView(status, margins(top = 12))
+        content.addView(Button(this).apply {
+            text = "导出诊断日志"
+            setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), EXPORT_LOGS_REQUEST) }
+        }, margins(top = 12))
         manager = ArGlassesManager(this, mainExecutor, this)
     }
 
     override fun onResume() { super.onResume(); manager.scan() }
 
     override fun onDevicesChanged(devices: List<ConnectedGlasses>) {
-        content.removeViews(2, (content.childCount - 2).coerceAtLeast(0))
+        content.removeViews(3, (content.childCount - 3).coerceAtLeast(0))
         val glasses = devices.firstOrNull()
         if (glasses == null) {
             status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One S、Rokid Air / Max、VITURE Beast、LUCI"
@@ -49,5 +54,17 @@ class MainActivity : Activity(), ArGlassesListener {
         }, margins(top = 12))
     }
 
+    @Deprecated("Uses framework Activity results to keep the diagnostic APK dependency-free")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != EXPORT_LOGS_REQUEST || resultCode != RESULT_OK) return
+        val tree = data?.data ?: return
+        runCatching { ArGlassesDiagnostics.exportToTree(this, tree) }
+            .onSuccess { status.text = "已导出：${it.joinToString()}" }
+            .onFailure { status.text = "导出失败：${it.message}" }
+    }
+
     override fun onDestroy() { manager.close(); super.onDestroy() }
+
+    private companion object { const val EXPORT_LOGS_REQUEST = 7001 }
 }

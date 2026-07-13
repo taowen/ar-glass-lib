@@ -5,11 +5,12 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.driver.DriverSession
+import com.taowen.arglass.driver.tracedControlTransfer
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class LuciDisplaySession(
     usbManager: UsbManager,
-    device: UsbDevice,
+    private val device: UsbDevice,
 ) : DriverSession {
     private val closed = AtomicBoolean(false)
     private val hidInterface = (0 until device.interfaceCount).map(device::getInterface)
@@ -29,7 +30,8 @@ internal class LuciDisplaySession(
             else -> return false
         }
         val report = LuciDisplayProtocol.powerStateReport(enable3d)
-        val transferred = connection.controlTransfer(
+        val transferred = connection.tracedControlTransfer(
+            device,
             LuciDisplayProtocol.HID_SET_REPORT_REQUEST_TYPE,
             LuciDisplayProtocol.HID_SET_REPORT,
             LuciDisplayProtocol.HID_FEATURE_REPORT_ID_2,

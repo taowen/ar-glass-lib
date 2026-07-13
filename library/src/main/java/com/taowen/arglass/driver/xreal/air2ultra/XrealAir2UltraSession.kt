@@ -14,6 +14,7 @@ import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.inputEndpoint
 import com.taowen.arglass.driver.interfaceById
 import com.taowen.arglass.driver.outputEndpoint
+import com.taowen.arglass.driver.tracedBulkTransfer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
@@ -75,7 +76,7 @@ internal class XrealAir2UltraSession(
             val input = requireNotNull(imuIn)
             val packet = ByteArray(maxOf(64, input.maxPacketSize))
             while (running.get()) {
-                val length = connection.bulkTransfer(input, packet, packet.size, 750)
+                val length = connection.tracedBulkTransfer(device, input, packet, packet.size, 750)
                 if (length == 64) decodeSample(packet.copyOf(length))?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Throwable) { if (running.get()) status("IMU 会话失败：${error.message}") }
@@ -94,20 +95,20 @@ internal class XrealAir2UltraSession(
 
     private fun imuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray = synchronized(connection) {
         val packet = NativeBridge.makeImuCommand(command, payload)
-        if (connection.bulkTransfer(requireNotNull(imuOut), packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
+        if (connection.tracedBulkTransfer(device, requireNotNull(imuOut), packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
         readMatching(requireNotNull(imuIn), 0xaa, command)
     }
 
     private fun mcuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray = synchronized(connection) {
         val id = requestId++; val packet = NativeBridge.makeMcuCommand(command, id, payload)
-        if (connection.bulkTransfer(requireNotNull(mcuOut), packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
+        if (connection.tracedBulkTransfer(device, requireNotNull(mcuOut), packet, packet.size, 500) != packet.size) return@synchronized byteArrayOf()
         readMatching(requireNotNull(mcuIn), 0xfd, command, id)
     }
 
     private fun readMatching(endpoint: UsbEndpoint, magic: Int, command: Int, id: Int? = null): ByteArray {
         val packet = ByteArray(maxOf(64, endpoint.maxPacketSize))
         repeat(10) {
-            val length = connection.bulkTransfer(endpoint, packet, packet.size, 300)
+            val length = connection.tracedBulkTransfer(device, endpoint, packet, packet.size, 300)
             if (length < 8 || (packet[0].toInt() and 0xff) != magic) return@repeat
             val responseCommand = if (magic == 0xfd && length >= 17) (packet[15].toInt() and 0xff) or ((packet[16].toInt() and 0xff) shl 8) else packet[7].toInt() and 0xff
             val responseId = if (magic == 0xfd && length >= 11) ByteBuffer.wrap(packet, 7, 4).order(ByteOrder.LITTLE_ENDIAN).int else null

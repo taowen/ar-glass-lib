@@ -12,6 +12,8 @@ import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
+import com.taowen.arglass.driver.tracedBulkTransfer
+import com.taowen.arglass.driver.tracedControlTransfer
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -45,14 +47,14 @@ internal class RokidAirSession(
 
     override fun queryDisplayMode(): DisplayMode? {
         val response = ByteArray(64)
-        val length = connection.controlTransfer(0xc0, 0x81, 0, 1, response, response.size, 500)
+        val length = connection.tracedControlTransfer(device, 0xc0, 0x81, 0, 1, response, response.size, 500)
         return if (length >= 2) RokidProtocol.displayMode(response[1].toInt() and 0xff) else null
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         val value = RokidProtocol.wireValue(mode) ?: return false
         val payload = byteArrayOf(0)
-        return connection.controlTransfer(0x40, 0x01, value, 1, payload, payload.size, 500) >= 0
+        return connection.tracedControlTransfer(device, 0x40, 0x01, value, 1, payload, payload.size, 500) >= 0
     }
 
     private fun findImuPort(): Pair<UsbInterface, UsbEndpoint>? {
@@ -72,7 +74,7 @@ internal class RokidAirSession(
     private fun readImu(endpoint: UsbEndpoint) {
         val bytes = ByteArray(maxOf(64, endpoint.maxPacketSize))
         while (running.get()) {
-            val length = connection.bulkTransfer(endpoint, bytes, bytes.size, 750)
+            val length = connection.tracedBulkTransfer(device, endpoint, bytes, bytes.size, 750)
             if (length <= 0) continue
             RokidProtocol.decodeCombined(bytes, length)?.let { emit(it); continue }
             val reading = RokidProtocol.decodeSensor(bytes, length) ?: continue

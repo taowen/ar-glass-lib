@@ -15,6 +15,7 @@ import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.inputEndpoint
 import com.taowen.arglass.driver.interfaceById
 import com.taowen.arglass.driver.outputEndpoint
+import com.taowen.arglass.driver.tracedBulkTransfer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
@@ -105,7 +106,7 @@ internal class XrealXbxSession(
             val input = requireNotNull(imuIn)
             val report = ByteArray(maxOf(64, input.maxPacketSize))
             while (running.get()) {
-                val length = connection.bulkTransfer(input, report, report.size, 750)
+                val length = connection.tracedBulkTransfer(device, input, report, report.size, 750)
                 if (length == 64) decodeImu(report.copyOf(length))?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Throwable) {
@@ -132,7 +133,7 @@ internal class XrealXbxSession(
     private fun imuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray {
         val packet = NativeBridge.makeImuCommand(command, payload)
         synchronized(connection) {
-            if (connection.bulkTransfer(requireNotNull(imuOut), packet, packet.size, 750) != packet.size) return byteArrayOf()
+            if (connection.tracedBulkTransfer(device, requireNotNull(imuOut), packet, packet.size, 750) != packet.size) return byteArrayOf()
         }
         return readMatching(requireNotNull(imuIn), 0xaa, command)
     }
@@ -141,7 +142,7 @@ internal class XrealXbxSession(
         val id = requestId.getAndIncrement()
         val packet = NativeBridge.makeMcuCommand(command, id, payload)
         synchronized(connection) {
-            if (connection.bulkTransfer(mcuOut, packet, packet.size, 750) != packet.size) return byteArrayOf()
+            if (connection.tracedBulkTransfer(device, mcuOut, packet, packet.size, 750) != packet.size) return byteArrayOf()
         }
         return readMatching(mcuIn, 0xfd, command, id)
     }
@@ -150,7 +151,7 @@ internal class XrealXbxSession(
         val id = requestId.getAndIncrement()
         val payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(SystemClock.elapsedRealtimeNanos()).array()
         val packet = NativeBridge.makeMcuCommand(0x1a, id, payload)
-        val written = synchronized(connection) { connection.bulkTransfer(mcuOut, packet, packet.size, 250) == packet.size }
+        val written = synchronized(connection) { connection.tracedBulkTransfer(device, mcuOut, packet, packet.size, 250) == packet.size }
         return written && (!waitForAck || readMatching(mcuIn, 0xfd, 0x1a, id).isNotEmpty())
     }
 
@@ -167,7 +168,7 @@ internal class XrealXbxSession(
     private fun readMatching(endpoint: UsbEndpoint, magic: Int, command: Int, id: Int? = null): ByteArray {
         val packet = ByteArray(maxOf(64, endpoint.maxPacketSize))
         repeat(12) {
-            val length = synchronized(connection) { connection.bulkTransfer(endpoint, packet, packet.size, 500) }
+            val length = synchronized(connection) { connection.tracedBulkTransfer(device, endpoint, packet, packet.size, 500) }
             if (length < 8 || (packet[0].toInt() and 0xff) != magic) return@repeat
             val responseCommand = if (magic == 0xfd && length >= 17)
                 (packet[15].toInt() and 0xff) or ((packet[16].toInt() and 0xff) shl 8) else packet[7].toInt() and 0xff

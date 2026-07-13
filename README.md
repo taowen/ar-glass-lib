@@ -28,6 +28,11 @@ The `library` module is the reusable API. The `app` module is an independently i
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
+The standalone APK also has a **导出诊断日志** action. It exports two separate binary files instead of mixing diagnostics into logcat:
+
+- `usb-transfers.bin`: append-only USB permission and raw control/bulk/interrupt transfer records, including VID/PID, endpoint or control parameters, result length, and payload bytes. Record magic is `ARUS` and format version is 1; operation 1 is device-to-host, 2 is host-to-device, 3 is a permission request, and 4 is its result.
+- `crashes.bin`: append-only uncaught exception records with `ARCR` magic, format version 1, timestamp, thread name, and stack trace bytes.
+
 Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
 
 ## Build

@@ -43,7 +43,9 @@ class ArGlassesManager(
                     val device = intent.usbDevice() ?: pendingPermission ?: return
                     pendingPermission = null
                     val identified = ArGlassesCatalog.identify(device)?.let { ConnectedGlasses(device, it) } ?: return
-                    dispatch { listener.onPermissionResult(identified, usbManager.hasPermission(device)) }
+                    val granted = usbManager.hasPermission(device)
+                    ArGlassesDiagnostics.recordPermission(device, requested = false, granted = granted)
+                    dispatch { listener.onPermissionResult(identified, granted) }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED, UsbManager.ACTION_USB_DEVICE_DETACHED -> scan()
             }
@@ -51,6 +53,7 @@ class ArGlassesManager(
     }
 
     init {
+        ArGlassesDiagnostics.initialize(appContext)
         val filter = IntentFilter().apply {
             addAction(ACTION_USB_PERMISSION)
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
@@ -67,6 +70,7 @@ class ArGlassesManager(
 
     fun requestPermission(device: UsbDevice) {
         pendingPermission = device
+        ArGlassesDiagnostics.recordPermission(device, requested = true, granted = usbManager.hasPermission(device))
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(appContext.packageName)
         val pendingIntent = PendingIntent.getBroadcast(
             appContext, 0, intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

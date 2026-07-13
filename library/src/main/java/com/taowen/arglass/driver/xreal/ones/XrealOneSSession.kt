@@ -14,6 +14,7 @@ import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.inputEndpoint
 import com.taowen.arglass.driver.interfaceById
 import com.taowen.arglass.driver.outputEndpoint
+import com.taowen.arglass.driver.tracedBulkTransfer
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
@@ -126,14 +127,14 @@ internal class XrealOneSSession(
         val id = requestId.getAndIncrement()
         val packet = NativeBridge.makeMcuCommand(command, id, payload)
         val usb = requireNotNull(connection)
-        if (usb.bulkTransfer(requireNotNull(mcuOut), packet, packet.size, 750) != packet.size) return byteArrayOf()
+        if (usb.tracedBulkTransfer(device, requireNotNull(mcuOut), packet, packet.size, 750) != packet.size) return byteArrayOf()
         return readMatching(usb, requireNotNull(mcuIn), command, id)
     }
 
     private fun readMatching(usb: UsbDeviceConnection, endpoint: UsbEndpoint, command: Int, id: Int): ByteArray {
         val packet = ByteArray(maxOf(64, endpoint.maxPacketSize))
         repeat(12) {
-            val length = usb.bulkTransfer(endpoint, packet, packet.size, 400)
+            val length = usb.tracedBulkTransfer(device, endpoint, packet, packet.size, 400)
             if (length < 17 || packet[0] != 0xfd.toByte()) return@repeat
             val responseId = ByteBuffer.wrap(packet, 7, 4).order(ByteOrder.LITTLE_ENDIAN).int
             val responseCommand = (packet[15].toInt() and 0xff) or ((packet[16].toInt() and 0xff) shl 8)

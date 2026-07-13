@@ -11,6 +11,8 @@ import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
+import com.taowen.arglass.driver.tracedBulkTransfer
+import com.taowen.arglass.driver.tracedControlTransfer
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -80,8 +82,8 @@ internal class VitureBeastSession(
     private fun send(command: ByteArray): Boolean {
         var sent = false
         ports.forEach { port ->
-            val count = port.output?.let { output -> connection.bulkTransfer(output, command, command.size, 500) }
-                ?: connection.controlTransfer(0x21, 0x09, 0x0200, port.usbInterface.id, command, command.size, 500)
+            val count = port.output?.let { output -> connection.tracedBulkTransfer(device, output, command, command.size, 500) }
+                ?: connection.tracedControlTransfer(device, 0x21, 0x09, 0x0200, port.usbInterface.id, command, command.size, 500)
             if (count == command.size) sent = true
         }
         return sent
@@ -92,7 +94,7 @@ internal class VitureBeastSession(
         while (!done() && System.nanoTime() < deadline) {
             ports.mapNotNull { it.input }.forEach { input ->
                 val bytes = ByteArray(maxOf(64, input.maxPacketSize))
-                val length = connection.bulkTransfer(input, bytes, bytes.size, 80)
+                val length = connection.tracedBulkTransfer(device, input, bytes, bytes.size, 80)
                 if (length > 0) handlePacket(bytes, length)
             }
         }
@@ -101,7 +103,7 @@ internal class VitureBeastSession(
     private fun readLoop(input: UsbEndpoint) {
         val bytes = ByteArray(maxOf(64, input.maxPacketSize))
         while (running.get()) {
-            val length = connection.bulkTransfer(input, bytes, bytes.size, 750)
+            val length = connection.tracedBulkTransfer(device, input, bytes, bytes.size, 750)
             if (length > 0) handlePacket(bytes.copyOf(length), length)
         }
     }
