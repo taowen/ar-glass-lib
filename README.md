@@ -7,6 +7,7 @@ Supported models:
 - **XREAL Air 2 Ultra** (`3318:0426`, Flora)
 - **XREAL XBX A01** (`3318:0440`, Helen)
 - **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
+- **XREAL One S** (`3318:043E`, GS)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
 
@@ -100,3 +101,11 @@ Protocol behavior was adapted from the open-source `android-sensor-probe` projec
 - A 100 ms MCU heartbeat remains active for the session lifetime.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
+
+## XREAL One S protocol notes
+
+- Runtime USB identity: `3318:043E` (GS, official type 71). The adjacent odd PID is a bootloader and is not opened as a runtime device.
+- Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08`.
+- IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
+- The stream is reassembled into 84-byte frames and exposes acceleration, angular velocity, and the device timestamp in Android-oriented coordinates.
+- The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
