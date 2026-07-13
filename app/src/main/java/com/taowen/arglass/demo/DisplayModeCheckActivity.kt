@@ -6,9 +6,9 @@ import com.taowen.arglass.ConnectedGlasses
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.SessionFeature
 
-/** XREAL MCU display-mode query and explicit 2D/3D switch checks. */
+/** Standalone 3D switch UI. Model-specific commands remain inside the library drivers. */
 class DisplayModeCheckActivity : UsbCheckActivity() {
-    override val titleText = "2D / 3D 切换检测"
+    override val titleText = "3D 开关"
     override val sessionFeature = SessionFeature.DISPLAY_MODE
 
     override fun onReady(glasses: ConnectedGlasses, session: ArGlassesSession?) {
@@ -29,25 +29,45 @@ class DisplayModeCheckActivity : UsbCheckActivity() {
                 }, "display-mode-query").start()
             }
         })
-        glasses.model.supportedDisplayModes.forEach { mode ->
-            content.addView(Button(this).apply {
-                text = when (mode) {
-                    DisplayMode.MIRROR_2D -> "切换到 2D"
-                    DisplayMode.HALF_SBS_3D -> "切换到 Half SBS 3D"
-                    DisplayMode.FULL_SBS_3D -> "切换到 Full SBS 3D"
-                    DisplayMode.HIGH_REFRESH_SBS_3D -> "切换到高刷 SBS 3D"
-                }
-                setOnClickListener {
-                    isEnabled = false
-                    Thread({
-                        val changed = control.setDisplayMode(mode)
-                        runOnUiThread {
-                            status.text = if (changed) "已发送 ${mode.name}，请观察眼镜画面" else "模式切换失败"
-                            isEnabled = true
-                        }
-                    }, "display-mode-set").start()
-                }
-            }, margins(top = 8))
+        val supportedModes = glasses.model.supportedDisplayModes
+        val preferred3dMode = listOf(
+            DisplayMode.FULL_SBS_3D,
+            DisplayMode.HALF_SBS_3D,
+            DisplayMode.HIGH_REFRESH_SBS_3D,
+        ).firstOrNull(supportedModes::contains)
+
+        preferred3dMode?.let { mode ->
+            addModeButton("开启 3D", mode, control)
         }
+        if (DisplayMode.MIRROR_2D in supportedModes) {
+            addModeButton("关闭 3D（恢复 2D）", DisplayMode.MIRROR_2D, control)
+        }
+    }
+
+    private fun addModeButton(caption: String, mode: DisplayMode, control: ArGlassesSession) {
+        content.addView(Button(this).apply {
+            text = caption
+            setOnClickListener {
+                isEnabled = false
+                Thread({
+                    val changed = control.setDisplayMode(mode)
+                    runOnUiThread {
+                        status.text = if (changed) {
+                            if (mode == DisplayMode.MIRROR_2D) "3D 已关闭，当前为 2D" else "3D 已开启（${modeLabel(mode)}）"
+                        } else {
+                            "模式切换失败"
+                        }
+                        isEnabled = true
+                    }
+                }, "display-mode-set").start()
+            }
+        }, margins(top = 8))
+    }
+
+    private fun modeLabel(mode: DisplayMode) = when (mode) {
+        DisplayMode.MIRROR_2D -> "2D"
+        DisplayMode.HALF_SBS_3D -> "Half SBS"
+        DisplayMode.FULL_SBS_3D -> "Full SBS"
+        DisplayMode.HIGH_REFRESH_SBS_3D -> "高刷 SBS"
     }
 }

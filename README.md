@@ -22,7 +22,7 @@ Supported models:
 The `library` module is the reusable API. The `app` module is an independently installable, framework-Views diagnostic UI that waits for glasses, identifies them, and lets the user run each check explicitly. Each check has its own Activity and implementation:
 
 - `ImuCheckActivity`: opens only the IMU interface and validates its stream.
-- `DisplayModeCheckActivity`: opens only the MCU interface for 2D/3D queries and switches.
+- `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.

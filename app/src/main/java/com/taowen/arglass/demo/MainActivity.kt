@@ -38,7 +38,7 @@ class MainActivity : Activity(), ArGlassesListener {
         }
         status.text = "已识别：${glasses.model.displayName}\n请选择需要检查的功能"
         if (GlassesCapability.IMU in glasses.model.capabilities) addCheckButton("IMU 检测", ImuCheckActivity::class.java)
-        if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("2D / 3D 切换检测", DisplayModeCheckActivity::class.java)
+        if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("开启 / 关闭 3D", DisplayModeCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_RESOLUTION in glasses.model.capabilities) addCheckButton("分辨率检测", ResolutionCheckActivity::class.java)
     }
 
