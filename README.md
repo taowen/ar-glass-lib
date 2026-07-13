@@ -6,6 +6,7 @@ Supported models:
 
 - **XREAL Air 2 Ultra** (`3318:0426`, Flora)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
+- **LUCI displays** (`2C30:1030` and `2C30:1031`)
 
 ## Capabilities
 
@@ -63,6 +64,12 @@ The public native surface provides XREAL MCU/IMU packet construction and version
 - RAW IMU starts with message `0x0301` and payload `02 02` (120 Hz); reports use message `0x7309`.
 - `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
 - The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
+
+## LUCI protocol notes
+
+- USB identities: VID `0x2C30`, PID `0x1030` or `0x1031`.
+- 2D/3D switching uses a 64-byte HID Feature Report (`SET_REPORT`, value `0x0302`).
+- The LUCI driver exposes display-mode and resolution checks. It does not advertise IMU because this protocol does not provide a verified LUCI sensor stream.
 
 ## XREAL Air 2 Ultra protocol notes
 
