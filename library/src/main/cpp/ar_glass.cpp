@@ -1,6 +1,7 @@
 #include "ar_glass.h"
 
 #include <cmath>
+#include <chrono>
 #include <cstring>
 
 namespace ar_glass {
@@ -45,6 +46,9 @@ std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::uint32_t 
     packet[0] = 0xfd;
     put_le(packet, 5, body_length, 2);
     put_le(packet, 7, request_id, 4);
+    const auto stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    put_le(packet, 11, static_cast<std::uint32_t>(stamp), 4);
     put_le(packet, 15, command, 2);
     std::copy(payload.begin(), payload.end(), packet.begin() + 22);
     put_le(packet, 1, crc32(std::span(packet).subspan(5, body_length)), 4);

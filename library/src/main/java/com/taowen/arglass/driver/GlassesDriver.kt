@@ -9,6 +9,8 @@ import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.viture.beast.VitureBeastDriver
 import com.taowen.arglass.driver.luci.LuciDriver
 import com.taowen.arglass.driver.xreal.air2ultra.XrealAir2UltraDriver
+import com.taowen.arglass.driver.xreal.xbxa01.XrealXbxA01Driver
+import com.taowen.arglass.driver.xreal.xbxa01plus.XrealXbxA01PlusDriver
 import java.io.Closeable
 import java.util.concurrent.Executor
 
@@ -31,7 +33,13 @@ internal interface DriverSession : Closeable {
 }
 
 internal object GlassesDriverRegistry {
-    private val drivers: List<GlassesDriver> = listOf(XrealAir2UltraDriver, VitureBeastDriver, LuciDriver)
+    private val drivers: List<GlassesDriver> = listOf(
+        XrealAir2UltraDriver,
+        XrealXbxA01Driver,
+        XrealXbxA01PlusDriver,
+        VitureBeastDriver,
+        LuciDriver,
+    )
 
     fun identify(device: UsbDevice): GlassesModel? = drivers.firstNotNullOfOrNull { it.identify(device) }
 

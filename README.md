@@ -5,6 +5,8 @@ Android library and standalone check app for USB-C AR glasses.
 Supported models:
 
 - **XREAL Air 2 Ultra** (`3318:0426`, Flora)
+- **XREAL XBX A01** (`3318:0440`, Helen)
+- **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
 
@@ -88,3 +90,13 @@ The public native surface provides XREAL MCU/IMU packet construction and version
 - Wire mode values: 1 = 2D, 2 = Half SBS, 3 = Full SBS, 4 = high-refresh SBS.
 
 Protocol behavior was adapted from the open-source `android-sensor-probe` project and its XREAL protocol research. Hardware behavior still needs validation on each firmware version.
+
+## XREAL XBX protocol notes
+
+- XBX A01 uses `3318:0440`; XBX A01 Plus uses `3318:0442`.
+- Both use the Helen transport but remain separately registered models.
+- The driver claims MCU interface 0 first and sends `0x26`, `0x57`, `0x12(1)`, `0x02(1)`, `0x34`, `0x35`.
+- It then performs the required `0x31 / "3.1.1"` SDK handshake and two initial heartbeats before claiming IMU interface 1.
+- A 100 ms MCU heartbeat remains active for the session lifetime.
+- IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
+- Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
