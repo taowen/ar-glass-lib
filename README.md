@@ -28,7 +28,15 @@ Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver ow
 
 ## Build
 
-Requires JDK 17, Android SDK 36, and an installed Android NDK/CMake toolchain.
+Requires JDK 17, Android SDK 36, and an installed Android NDK/CMake toolchain. Build the independently installable check APK with:
+
+```bash
+./scripts/build-apk.sh
+```
+
+The APK is copied to `dist/ar-glass-check-debug.apk`. To build an unsigned release APK instead, run `./scripts/build-apk.sh release`.
+
+For module-only builds:
 
 ```bash
 ./gradlew :library:assembleDebug :app:assembleDebug
