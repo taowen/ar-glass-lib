@@ -113,7 +113,16 @@ Flora's official mode table has no Half SBS entry.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
 - Helen does not use the generic display-mode wire values. Matching ARLauncher,
-  the preferred modes are `10` (1920x1080@90 2D) and `4` (3840x1080@72 3D).
+  the preferred modes are `10` (1920x1080@90 2D), `4` (3840x1080@72 3D),
+  and `2` (3840x1080@120 3D). Mode values in command `0x08` are always encoded
+  as four-byte little-endian integers, matching the official `int EGlassMode` ABI.
+
+All XREAL USB interfaces and transfers are owned by `XrealNativeUsbSession` in
+JNI. Kotlin retains Android device enumeration/permission and the One-family
+USB-Ethernet TCP reader, but does not claim interfaces or issue XREAL endpoint
+transfers. Native transactions perform framing, request-ID matching, bounded
+asynchronous-event skipping, and route every Android bulk call through the
+shared binary diagnostics recorder.
 
 ## XREAL One S protocol notes
 

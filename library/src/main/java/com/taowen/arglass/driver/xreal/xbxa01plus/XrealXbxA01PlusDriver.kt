@@ -21,7 +21,7 @@ internal object XrealXbxA01PlusDriver : GlassesDriver {
         GlassesModel(
             id, "XREAL", profile.marketName, 0x3318, profile.productId,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-            DisplayMode.entries.toSet(), id,
+            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D), id,
         ) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,

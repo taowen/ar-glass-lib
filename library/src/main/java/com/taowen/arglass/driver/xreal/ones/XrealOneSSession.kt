@@ -1,27 +1,20 @@
 package com.taowen.arglass.driver.xreal.ones
 
 import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbDeviceConnection
-import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
-import com.taowen.arglass.NativeBridge
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
-import com.taowen.arglass.driver.inputEndpoint
-import com.taowen.arglass.driver.interfaceById
-import com.taowen.arglass.driver.outputEndpoint
-import com.taowen.arglass.driver.tracedBulkTransfer
+import com.taowen.arglass.driver.xreal.XrealNativeUsbSession
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.sqrt
 
 /** GS-family split transport: MCU over USB HID, IMU over USB Ethernet TCP. */
@@ -36,25 +29,15 @@ internal class XrealOneSSession(
     private val running = AtomicBoolean(true)
     private val displayEnabled = feature == SessionFeature.DISPLAY_MODE || feature == SessionFeature.ALL
     private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
-    private val connection: UsbDeviceConnection? = if (displayEnabled) usbManager.openDevice(device) else null
-    private val mcuInterface = if (displayEnabled) device.interfaceById(0) else null
-    private val mcuIn = mcuInterface?.inputEndpoint()
-    private val mcuOut = mcuInterface?.outputEndpoint()
-    private val requestId = AtomicInteger(1)
+    private val usb = if (displayEnabled) XrealNativeUsbSession(usbManager, device, useMcu = true, useImu = false) else null
     @Volatile private var socket: Socket? = null
     private val imuThread = if (imuEnabled) Thread(::readEthernetImu, "xreal-one-s-tcp-imu") else null
 
-    init {
-        if (displayEnabled) {
-            checkNotNull(connection) { "Cannot open ${model.displayName} USB controller" }
-            check(connection.claimInterface(requireNotNull(mcuInterface), true)) { "Cannot claim ${model.displayName} MCU interface 0" }
-        }
-        imuThread?.start()
-    }
+    init { imuThread?.start() }
 
     override fun queryDisplayMode(): DisplayMode? {
         check(displayEnabled) { "This session was not opened for display-mode control" }
-        val response = mcuCommand(0x07)
+        val response = requireNotNull(usb).mcu(0x07)
         val value = when {
             response.size >= 27 -> ByteBuffer.wrap(response, 23, 4).order(ByteOrder.LITTLE_ENDIAN).int
             response.size >= 24 -> response[23].toInt() and 0xff
@@ -66,7 +49,8 @@ internal class XrealOneSSession(
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         val oneSeriesMode = XrealOneSDisplayModeProtocol.encode(mode)
-        val response = mcuCommand(0x08, byteArrayOf(oneSeriesMode.toByte()))
+        val payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(oneSeriesMode).array()
+        val response = requireNotNull(usb).mcu(0x08, payload)
         return response.size >= 23 && (response[22].toInt() and 0xff) == 0
     }
 
@@ -124,34 +108,13 @@ internal class XrealOneSSession(
         )
     }
 
-    private fun mcuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray {
-        val id = requestId.getAndIncrement()
-        val packet = NativeBridge.makeMcuCommand(command, id, payload)
-        val usb = requireNotNull(connection)
-        if (usb.tracedBulkTransfer(device, requireNotNull(mcuOut), packet, packet.size, 750) != packet.size) return byteArrayOf()
-        return readMatching(usb, requireNotNull(mcuIn), command, id)
-    }
-
-    private fun readMatching(usb: UsbDeviceConnection, endpoint: UsbEndpoint, command: Int, id: Int): ByteArray {
-        val packet = ByteArray(maxOf(64, endpoint.maxPacketSize))
-        repeat(12) {
-            val length = usb.tracedBulkTransfer(device, endpoint, packet, packet.size, 400)
-            if (length < 17 || packet[0] != 0xfd.toByte()) return@repeat
-            val responseId = ByteBuffer.wrap(packet, 7, 4).order(ByteOrder.LITTLE_ENDIAN).int
-            val responseCommand = (packet[15].toInt() and 0xff) or ((packet[16].toInt() and 0xff) shl 8)
-            if (responseId == id && responseCommand == command) return packet.copyOf(length)
-        }
-        return byteArrayOf()
-    }
-
     private fun status(message: String) = executor.execute { listener.onStatus(message) }
 
     override fun close() {
         if (!running.compareAndSet(true, false)) return
         runCatching { socket?.close() }
         imuThread?.interrupt(); if (Thread.currentThread() !== imuThread) imuThread?.join(1_200)
-        mcuInterface?.let { connection?.releaseInterface(it) }
-        connection?.close()
+        usb?.close()
     }
 
     private companion object {

@@ -16,13 +16,15 @@ internal object XrealXbxDisplayModeProtocol {
 
     fun decode(value: Int): DisplayMode? = when (value) {
         MODE_2D_60HZ, MODE_2D_72HZ, MODE_2D_90HZ, MODE_2D_120HZ -> DisplayMode.MIRROR_2D
-        MODE_3D_60HZ, MODE_3D_72HZ, MODE_3D_90HZ, MODE_3D_120HZ -> DisplayMode.FULL_SBS_3D
+        MODE_3D_120HZ -> DisplayMode.HIGH_REFRESH_SBS_3D
+        MODE_3D_60HZ, MODE_3D_72HZ, MODE_3D_90HZ -> DisplayMode.FULL_SBS_3D
         else -> null
     }
 
     fun encode(mode: DisplayMode): Int = when (mode) {
         DisplayMode.MIRROR_2D -> MODE_2D_90HZ
         DisplayMode.FULL_SBS_3D -> MODE_3D_72HZ
-        else -> error("XBX/Helen does not support $mode through the ARLauncher display-mode path")
+        DisplayMode.HIGH_REFRESH_SBS_3D -> MODE_3D_120HZ
+        DisplayMode.HALF_SBS_3D -> error("XBX/Helen has no Half SBS mode in the official mode table")
     }
 }
