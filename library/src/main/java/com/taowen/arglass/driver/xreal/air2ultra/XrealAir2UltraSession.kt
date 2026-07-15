@@ -56,13 +56,14 @@ internal class XrealAir2UltraSession(
             response.size >= 24 -> response[23].toInt() and 0xff
             else -> return null
         }
-        return DisplayMode.fromWireValue(value)
+        return XrealAir2UltraDisplayModeProtocol.decode(value)
     }
 
     @Synchronized
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
-        return mcuCommand(0x08, byteArrayOf(mode.wireValue.toByte())).let {
+        val floraMode = XrealAir2UltraDisplayModeProtocol.encode(mode)
+        return mcuCommand(0x08, byteArrayOf(floraMode.toByte())).let {
             it.size >= 23 && (it[22].toInt() and 0xff) == 0
         }
     }

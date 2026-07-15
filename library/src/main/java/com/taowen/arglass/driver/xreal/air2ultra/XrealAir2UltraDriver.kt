@@ -20,7 +20,7 @@ internal object XrealAir2UltraDriver : GlassesDriver {
         GlassesModel(
             id, "XREAL", "Air 2 Ultra", VID, PID,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-            DisplayMode.entries.toSet(),
+            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D),
             id,
         ) else null
 

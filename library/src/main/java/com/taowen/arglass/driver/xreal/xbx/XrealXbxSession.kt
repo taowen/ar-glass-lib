@@ -82,13 +82,14 @@ internal class XrealXbxSession(
             response.size >= 24 -> response[23].toInt() and 0xff
             else -> return null
         }
-        return DisplayMode.fromWireValue(value)
+        return XrealXbxDisplayModeProtocol.decode(value)
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         ensureMcuReady()
-        val response = mcuCommand(0x08, byteArrayOf(mode.wireValue.toByte()))
+        val helenMode = XrealXbxDisplayModeProtocol.encode(mode)
+        val response = mcuCommand(0x08, byteArrayOf(helenMode.toByte()))
         return response.size >= 23 && (response[22].toInt() and 0xff) == 0
     }
 

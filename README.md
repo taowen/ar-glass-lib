@@ -94,9 +94,14 @@ The public native surface provides XREAL MCU/IMU packet construction and version
 - MCU: interface 0; IMU: interface 1.
 - IMU uses CRC32-protected `0xaa` control frames and 64-byte versioned reports.
 - Display modes use CRC32-protected `0xfd` MCU commands `0x07` (query) and `0x08` (set).
-- Wire mode values: 1 = 2D, 2 = Half SBS, 3 = Full SBS, 4 = high-refresh SBS.
+- Generic `DisplayMode.wireValue` values are used only by drivers whose protocol
+  defines that mapping. Model-specific drivers translate to their native modes.
 
 Protocol behavior was adapted from the open-source `android-sensor-probe` project and its XREAL protocol research. Hardware behavior still needs validation on each firmware version.
+
+For Air 2 Ultra/Flora, the ARLauncher-compatible preferred modes are `10`
+(1920x1080@90 2D), `4` (3840x1080@72 3D), and `2` (3840x1080@120 3D).
+Flora's official mode table has no Half SBS entry.
 
 ## XREAL XBX protocol notes
 
@@ -107,6 +112,8 @@ Protocol behavior was adapted from the open-source `android-sensor-probe` projec
 - A 100 ms MCU heartbeat remains active for the session lifetime.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
+- Helen does not use the generic display-mode wire values. Matching ARLauncher,
+  the preferred modes are `10` (1920x1080@90 2D) and `4` (3840x1080@72 3D).
 
 ## XREAL One S protocol notes
 
