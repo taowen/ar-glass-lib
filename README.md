@@ -101,7 +101,9 @@ Protocol behavior was adapted from the open-source `android-sensor-probe` projec
 
 For Air 2 Ultra/Flora, the ARLauncher-compatible preferred modes are `10`
 (1920x1080@90 2D), `4` (3840x1080@72 3D), and `2` (3840x1080@120 3D).
-Flora's official mode table has no Half SBS entry.
+Flora's official mode table has no Half SBS entry. Unlike Helen, Flora encodes
+the command `0x08` mode payload as one byte; this matches the previously
+hardware-validated implementation and `ar-drivers-rs`.
 
 ## XREAL XBX protocol notes
 

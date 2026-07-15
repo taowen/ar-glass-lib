@@ -47,8 +47,7 @@ internal class XrealAir2UltraSession(
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
         val floraMode = XrealAir2UltraDisplayModeProtocol.encode(mode)
-        val payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(floraMode).array()
-        return usb.mcu(0x08, payload).let {
+        return usb.mcu(0x08, byteArrayOf(floraMode.toByte())).let {
             it.size >= 23 && (it[22].toInt() and 0xff) == 0
         }
     }
