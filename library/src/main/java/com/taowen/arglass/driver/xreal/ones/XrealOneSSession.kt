@@ -60,12 +60,13 @@ internal class XrealOneSSession(
             response.size >= 24 -> response[23].toInt() and 0xff
             else -> return null
         }
-        return DisplayMode.fromWireValue(value)
+        return XrealOneSDisplayModeProtocol.decode(value)
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
-        val response = mcuCommand(0x08, byteArrayOf(mode.wireValue.toByte()))
+        val oneSeriesMode = XrealOneSDisplayModeProtocol.encode(mode)
+        val response = mcuCommand(0x08, byteArrayOf(oneSeriesMode.toByte()))
         return response.size >= 23 && (response[22].toInt() and 0xff) == 0
     }
 

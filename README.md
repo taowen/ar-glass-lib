@@ -119,6 +119,9 @@ Flora's official mode table has no Half SBS entry.
 
 - Runtime USB identity: `3318:043E` (GS, official type 71). The adjacent odd PID is a bootloader and is not opened as a runtime device.
 - Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08`.
+- Matching the official One-series `ControlSet2D3DMode` path, preferred modes are
+  `10` (1920x1080@90 2D), `4` (3840x1080@72 3D), and `2`
+  (3840x1080@120 3D). The official mode table has no Half SBS entry.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
 - The stream is reassembled into 84-byte frames and exposes acceleration, angular velocity, and the device timestamp in Android-oriented coordinates.
 - The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
