@@ -42,6 +42,7 @@ internal class VitureBeastSession(
         }
         .filter { it.input != null || it.output != null }
     private val workers = CopyOnWriteArrayList<Thread>()
+    private val responseLock = Object()
     @Volatile private var displayModeValue: Int? = null
     @Volatile private var nativeModeValue: Int? = null
     @Volatile private var setDisplayStatus: Int? = null
@@ -58,25 +59,45 @@ internal class VitureBeastSession(
         }
     }
 
+    @Synchronized
     override fun queryDisplayMode(): DisplayMode? {
-        nativeModeValue = null; displayModeValue = null
-        if (!send(VitureBeastProtocol.command(0x3140)) || !send(VitureBeastProtocol.command(0x3142))) return null
-        if (!imuEnabled) readResponsesUntil { displayModeValue != null && nativeModeValue != null }
-        val native = when (nativeModeValue) { 1 -> "Native"; 0 -> "Bypass"; else -> "未知" }
-        status("Beast 工作模式：$native；显示：${if (displayModeValue == 0x37) "3D" else if (displayModeValue == 0x31) "2D" else "未知"}")
-        return when (displayModeValue) { 0x31 -> DisplayMode.MIRROR_2D; 0x37 -> DisplayMode.FULL_SBS_3D; else -> null }
+        val nativeMode = queryNativeMode() ?: return null
+        displayModeValue = null
+        val query = if (nativeMode) VitureBeastProtocol.GET_NATIVE_DISPLAY_MODE else VitureBeastProtocol.GET_BYPASS_DISPLAY_MODE
+        if (!send(VitureBeastProtocol.command(query)) || !awaitResponse { displayModeValue != null }) return null
+        val value = displayModeValue
+        val mode = when (value) {
+            VitureBeastProtocol.MODE_2D_1080_60HZ -> DisplayMode.MIRROR_2D
+            VitureBeastProtocol.NATIVE_MODE_3D_SBS_1080_60HZ -> if (nativeMode) DisplayMode.FULL_SBS_3D else null
+            VitureBeastProtocol.BYPASS_MODE_3D_SBS_1080_60HZ -> if (!nativeMode) DisplayMode.FULL_SBS_3D else null
+            else -> null
+        }
+        status("Beast 工作模式：${if (nativeMode) "Native" else "Bypass"}；显示：${mode?.let { if (it == DisplayMode.MIRROR_2D) "2D" else "3D" } ?: "未知(0x${value?.toString(16)})"}")
+        return mode
     }
 
+    @Synchronized
     override fun setDisplayMode(mode: DisplayMode): Boolean {
+        val nativeMode = queryNativeMode() ?: return false
         val value = when (mode) {
-            DisplayMode.MIRROR_2D -> 0x31
-            DisplayMode.FULL_SBS_3D -> 0x37
+            DisplayMode.MIRROR_2D -> VitureBeastProtocol.MODE_2D_1080_60HZ
+            DisplayMode.FULL_SBS_3D -> if (nativeMode) {
+                VitureBeastProtocol.NATIVE_MODE_3D_SBS_1080_60HZ
+            } else {
+                VitureBeastProtocol.BYPASS_MODE_3D_SBS_1080_60HZ
+            }
             else -> return false
         }
         setDisplayStatus = null
-        if (!send(VitureBeastProtocol.command(0x0142, byteArrayOf(value.toByte())))) return false
-        if (!imuEnabled) readResponsesUntil { setDisplayStatus != null }
-        return setDisplayStatus == 0
+        val command = if (nativeMode) VitureBeastProtocol.SET_NATIVE_DISPLAY_MODE else VitureBeastProtocol.SET_BYPASS_DISPLAY_MODE
+        return send(VitureBeastProtocol.command(command, byteArrayOf(value.toByte()))) &&
+            awaitResponse { setDisplayStatus != null } && setDisplayStatus == 0
+    }
+
+    private fun queryNativeMode(): Boolean? {
+        nativeModeValue = null
+        if (!send(VitureBeastProtocol.command(0x3140)) || !awaitResponse { nativeModeValue != null }) return null
+        return when (nativeModeValue) { 1 -> true; 0 -> false; else -> null }
     }
 
     private fun send(command: ByteArray): Boolean {
@@ -89,15 +110,20 @@ internal class VitureBeastSession(
         return sent
     }
 
-    private fun readResponsesUntil(done: () -> Boolean) {
+    private fun awaitResponse(done: () -> Boolean): Boolean {
         val deadline = System.nanoTime() + 1_500_000_000L
         while (!done() && System.nanoTime() < deadline) {
-            ports.mapNotNull { it.input }.forEach { input ->
-                val bytes = ByteArray(maxOf(64, input.maxPacketSize))
-                val length = connection.tracedBulkTransfer(device, input, bytes, bytes.size, 80)
-                if (length > 0) handlePacket(bytes, length)
+            if (imuEnabled) {
+                synchronized(responseLock) { if (!done()) responseLock.wait(25) }
+            } else {
+                ports.mapNotNull { it.input }.forEach { input ->
+                    val bytes = ByteArray(maxOf(64, input.maxPacketSize))
+                    val length = connection.tracedBulkTransfer(device, input, bytes, bytes.size, 80)
+                    if (length > 0) handlePacket(bytes, length)
+                }
             }
         }
+        return done()
     }
 
     private fun readLoop(input: UsbEndpoint) {
@@ -116,10 +142,16 @@ internal class VitureBeastSession(
         val packet = VitureBeastProtocol.decode(bytes, length) ?: return
         val value = packet.payload.getOrNull(1)?.toInt()?.and(0xff)
             ?: packet.payload.firstOrNull()?.toInt()?.and(0xff)
-        when (packet.messageId) {
-            VitureBeastProtocol.NATIVE_MODE_RESPONSE -> nativeModeValue = value
-            VitureBeastProtocol.DISPLAY_MODE_RESPONSE -> displayModeValue = value
-            VitureBeastProtocol.SET_DISPLAY_RESPONSE -> setDisplayStatus = packet.payload.firstOrNull()?.toInt()?.and(0xff)
+        synchronized(responseLock) {
+            when (packet.messageId) {
+                VitureBeastProtocol.NATIVE_MODE_RESPONSE -> nativeModeValue = value
+                VitureBeastProtocol.NATIVE_DISPLAY_MODE_RESPONSE,
+                VitureBeastProtocol.BYPASS_DISPLAY_MODE_RESPONSE -> displayModeValue = value
+                VitureBeastProtocol.SET_NATIVE_DISPLAY_RESPONSE,
+                VitureBeastProtocol.SET_BYPASS_DISPLAY_RESPONSE ->
+                    setDisplayStatus = packet.payload.firstOrNull()?.toInt()?.and(0xff)
+            }
+            responseLock.notifyAll()
         }
     }
 

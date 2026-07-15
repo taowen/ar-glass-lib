@@ -7,8 +7,18 @@ import java.nio.ByteOrder
 internal object VitureBeastProtocol {
     const val RAW_IMU_REPORT = 0x7309
     const val NATIVE_MODE_RESPONSE = 0x5140
-    const val DISPLAY_MODE_RESPONSE = 0x5142
-    const val SET_DISPLAY_RESPONSE = 0x2142
+    const val GET_BYPASS_DISPLAY_MODE = 0x3122
+    const val SET_BYPASS_DISPLAY_MODE = 0x0122
+    const val BYPASS_DISPLAY_MODE_RESPONSE = 0x5122
+    const val SET_BYPASS_DISPLAY_RESPONSE = 0x2122
+    const val GET_NATIVE_DISPLAY_MODE = 0x3142
+    const val SET_NATIVE_DISPLAY_MODE = 0x0142
+    const val NATIVE_DISPLAY_MODE_RESPONSE = 0x5142
+    const val SET_NATIVE_DISPLAY_RESPONSE = 0x2142
+
+    const val MODE_2D_1080_60HZ = 0x31
+    const val BYPASS_MODE_3D_SBS_1080_60HZ = 0x32
+    const val NATIVE_MODE_3D_SBS_1080_60HZ = 0x37
 
     data class Packet(val messageId: Int, val payload: ByteArray)
 
