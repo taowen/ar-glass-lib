@@ -3,6 +3,7 @@
     <usb-device vendor-id="13080" product-id="1088" />
     <usb-device vendor-id="13080" product-id="1090" />
     <usb-device vendor-id="13080" product-id="1086" />
+    <usb-device vendor-id="13080" product-id="1080" />
     <usb-device vendor-id="13770" product-id="4609" />
     <usb-device vendor-id="13770" product-id="4625" />
     <usb-device vendor-id="11312" product-id="4144" />

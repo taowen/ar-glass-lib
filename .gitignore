@@ -7,3 +7,4 @@ dist/
 captures/
 .externalNativeBuild/
 .cxx/
+app/vendorJniLibs/

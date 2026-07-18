@@ -9,13 +9,14 @@ android {
         applicationId = "com.taowen.arglass.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10003
-        versionName = "1.0.3"
+        versionCode = 10004
+        versionName = "1.0.4"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    sourceSets.getByName("main").jniLibs.srcDir("vendorJniLibs")
 }
 
 dependencies { implementation(project(":library")) }

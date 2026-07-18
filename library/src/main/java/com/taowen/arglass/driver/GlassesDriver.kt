@@ -13,6 +13,7 @@ import com.taowen.arglass.driver.xreal.air2ultra.XrealAir2UltraDriver
 import com.taowen.arglass.driver.xreal.xbxa01.XrealXbxA01Driver
 import com.taowen.arglass.driver.xreal.xbxa01plus.XrealXbxA01PlusDriver
 import com.taowen.arglass.driver.xreal.ones.XrealOneSDriver
+import com.taowen.arglass.driver.xreal.one.XrealOneDriver
 import java.io.Closeable
 import java.util.concurrent.Executor
 
@@ -39,6 +40,7 @@ internal object GlassesDriverRegistry {
         XrealAir2UltraDriver,
         XrealXbxA01Driver,
         XrealXbxA01PlusDriver,
+        XrealOneDriver,
         XrealOneSDriver,
         RokidAirDriver,
         VitureBeastDriver,

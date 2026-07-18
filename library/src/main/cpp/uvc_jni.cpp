@@ -11,8 +11,6 @@
 #include <vector>
 
 namespace {
-constexpr uint8_t kStreamingInterface = 1;
-constexpr uint8_t kEndpoint = 0x81;
 // Linux uvcvideo uses a five-URB ring for this camera. Keeping the same depth
 // avoids out-of-order USBFS completions observed with a larger Android ring.
 constexpr int kTransfers = 5;
@@ -34,6 +32,10 @@ struct Uvc {
     bool frameError = false;
     int packetSize = 0;
     int altSetting = 0;
+    uint8_t streamingInterface = 0;
+    uint8_t endpoint = 0;
+    bool bulk = false;
+    std::thread bulkThread;
 };
 
 Uvc* from(jlong p) { return reinterpret_cast<Uvc*>(static_cast<intptr_t>(p)); }
@@ -92,101 +94,132 @@ void LIBUSB_CALL isoCallback(libusb_transfer* transfer) {
 }
 
 // Locate the MJPEG format and 1920x1080 frame indexes from class-specific VS descriptors.
-bool findFormat(libusb_device_handle* handle, uint8_t& format, uint8_t& frame, uint32_t& interval,
-                int& alt, int& packetSize) {
+bool findFormat(libusb_device_handle* handle, Uvc* u, uint8_t& format, uint8_t& frame, uint32_t& interval) {
     libusb_config_descriptor* config = nullptr;
     if (libusb_get_active_config_descriptor(libusb_get_device(handle), &config) != 0) return false;
-    format=0; frame=0; interval=333333; alt=0; packetSize=0;
-    const auto& intf = config->interface[kStreamingInterface];
-    for (int a=0; a<intf.num_altsetting; ++a) {
-        const auto& setting=intf.altsetting[a];
-        for (int e=0; e<setting.bNumEndpoints; ++e) {
-            const auto& ep=setting.endpoint[e];
-            if (ep.bEndpointAddress==kEndpoint && (ep.bmAttributes&3)==LIBUSB_TRANSFER_TYPE_ISOCHRONOUS) {
-                int bytes=(ep.wMaxPacketSize&0x7ff)*(1+((ep.wMaxPacketSize>>11)&3));
-                // libuvc selects the smallest alternate setting that can carry
-                // the negotiated payload. Beast negotiates 2400 bytes and the
-                // official SDK selects alt 5 (raw wMaxPacketSize 0x1320).
-                if(bytes==2400){packetSize=bytes;alt=setting.bAlternateSetting;}
-                else if(!alt && bytes>packetSize){packetSize=bytes;alt=setting.bAlternateSetting;}
+    format=0; frame=0; interval=333333;
+    for (int i=0; i<config->bNumInterfaces && !format; ++i) {
+        const auto& intf = config->interface[i];
+        uint8_t candidateFormat=0,candidateFrame=0,candidateEndpoint=0;uint32_t candidateInterval=666666;
+        int candidateAlt=0,candidatePacket=0,candidatePixels=0;bool candidateBulk=false;
+        for (int a=0; a<intf.num_altsetting; ++a) {
+            const auto& setting=intf.altsetting[a];
+            if(setting.bInterfaceClass!=LIBUSB_CLASS_VIDEO || setting.bInterfaceSubClass!=2)continue;
+            for (int e=0; e<setting.bNumEndpoints; ++e) {
+                const auto& ep=setting.endpoint[e];
+                const int transferType=ep.bmAttributes&3;
+                if ((ep.bEndpointAddress&LIBUSB_ENDPOINT_DIR_MASK)==LIBUSB_ENDPOINT_IN &&
+                    (transferType==LIBUSB_TRANSFER_TYPE_ISOCHRONOUS || transferType==LIBUSB_TRANSFER_TYPE_BULK)) {
+                    int bytes=(ep.wMaxPacketSize&0x7ff)*(1+((ep.wMaxPacketSize>>11)&3));
+                    if(!candidateEndpoint || transferType==LIBUSB_TRANSFER_TYPE_BULK ||
+                       (!candidateBulk && (bytes==2400 || (candidatePacket!=2400 && bytes>candidatePacket)))) {
+                        candidatePacket=bytes;candidateAlt=setting.bAlternateSetting;candidateEndpoint=ep.bEndpointAddress;
+                        candidateBulk=transferType==LIBUSB_TRANSFER_TYPE_BULK;
+                    }
+                }
+            }
+            const uint8_t* p=setting.extra; int left=setting.extra_length; uint8_t mjpeg=0;
+            while(left>=3 && p[0]>=3 && p[0]<=left) {
+                if(p[1]==0x24 && p[2]==0x06) mjpeg=p[3];
+                if(p[1]==0x24 && p[2]==0x07 && mjpeg && p[0]>=26) {
+                    uint16_t w=p[5]|p[6]<<8, h=p[7]|p[8]<<8;
+                    const int pixels=w*h;
+                    if(pixels>candidatePixels){candidateFormat=mjpeg;candidateFrame=p[3];candidatePixels=pixels;candidateInterval=le32(p+21);}
+                }
+                left-=p[0]; p+=p[0];
             }
         }
-        const uint8_t* p=setting.extra; int left=setting.extra_length; uint8_t mjpeg=0;
-        while(left>=3 && p[0]>=3 && p[0]<=left) {
-            if(p[1]==0x24 && p[2]==0x06) mjpeg=p[3]; // VS_FORMAT_MJPEG
-            if(p[1]==0x24 && p[2]==0x07 && mjpeg && p[0]>=26) { // VS_FRAME_MJPEG
-                uint16_t w=p[5]|p[6]<<8, h=p[7]|p[8]<<8;
-                if(!format && w==1920 && h==1080){format=mjpeg;frame=p[3];interval=le32(p+21);}
-            }
-            left-=p[0]; p+=p[0];
+        if(candidateFormat&&candidateFrame&&candidatePacket&&candidateEndpoint){
+            format=candidateFormat;frame=candidateFrame;interval=candidateInterval;
+            u->streamingInterface=intf.altsetting[0].bInterfaceNumber;u->endpoint=candidateEndpoint;
+            u->altSetting=candidateAlt;u->packetSize=candidatePacket;u->bulk=candidateBulk;
         }
     }
     libusb_free_config_descriptor(config);
-    return format && frame && alt && packetSize;
+    return format && frame && u->packetSize && u->endpoint;
 }
 
-bool selectAlt(libusb_device_handle* handle,int desired,int& alt,int& packetSize){
+bool selectAlt(libusb_device_handle* handle,uint8_t interfaceNumber,uint8_t endpoint,int desired,int& alt,int& packetSize){
     libusb_config_descriptor* config=nullptr;if(libusb_get_active_config_descriptor(libusb_get_device(handle),&config)!=0)return false;
-    int bestBytes=0,bestAlt=0;const auto& intf=config->interface[kStreamingInterface];
+    int bestBytes=0,bestAlt=0;const libusb_interface* selected=nullptr;
+    for(int i=0;i<config->bNumInterfaces;++i)if(config->interface[i].num_altsetting&&config->interface[i].altsetting[0].bInterfaceNumber==interfaceNumber){selected=&config->interface[i];break;}
+    if(!selected){libusb_free_config_descriptor(config);return false;}const auto& intf=*selected;
     for(int a=0;a<intf.num_altsetting;++a){const auto& s=intf.altsetting[a];for(int e=0;e<s.bNumEndpoints;++e){const auto& ep=s.endpoint[e];
-        if(ep.bEndpointAddress!=kEndpoint||(ep.bmAttributes&3)!=LIBUSB_TRANSFER_TYPE_ISOCHRONOUS)continue;
+        if(ep.bEndpointAddress!=endpoint)continue;
         int bytes=(ep.wMaxPacketSize&0x7ff)*(1+((ep.wMaxPacketSize>>11)&3));
         if(bytes>=desired&&(!bestBytes||bytes<bestBytes)){bestBytes=bytes;bestAlt=s.bAlternateSetting;}
     }}
-    libusb_free_config_descriptor(config);if(!bestAlt)return false;alt=bestAlt;packetSize=desired;return true;
+    libusb_free_config_descriptor(config);if(!bestBytes)return false;alt=bestAlt;packetSize=desired;return true;
 }
 }
 
-extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_BeastCameraNative_start(JNIEnv*, jobject, jint fd) {
+extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_UvcCameraNative_start(JNIEnv*, jobject, jint fd) {
     auto* u=new Uvc();
     uint8_t format=0,frame=0; uint32_t interval=333333; uint8_t probe[26]{};
     libusb_set_option(nullptr, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, nullptr);
     if(libusb_init(&u->context)!=0 || libusb_wrap_sys_device(u->context, fd, &u->handle)!=0) goto fail;
-    if(libusb_kernel_driver_active(u->handle,kStreamingInterface)==1) libusb_detach_kernel_driver(u->handle,kStreamingInterface);
-    if(libusb_claim_interface(u->handle,kStreamingInterface)!=0) goto fail;
-    if(!findFormat(u->handle,format,frame,interval,u->altSetting,u->packetSize)) goto fail_claim;
-    // Exact libuvc sequence used by VITURE SDK 2.3.2 on Beast.
-    libusb_control_transfer(u->handle,0xa1,0x83,0x0100,kStreamingInterface,probe,sizeof(probe),1500);
+    if(!findFormat(u->handle,u,format,frame,interval)) goto fail;
+    if(libusb_kernel_driver_active(u->handle,u->streamingInterface)==1) libusb_detach_kernel_driver(u->handle,u->streamingInterface);
+    if(libusb_claim_interface(u->handle,u->streamingInterface)!=0) goto fail;
+    // UVC 1.1 probe/commit sequence used by both the Beast fallback and generic cameras.
+    libusb_control_transfer(u->handle,0xa1,0x83,0x0100,u->streamingInterface,probe,sizeof(probe),1500);
     std::memset(probe,0,sizeof(probe));probe[0]=1;probe[2]=format;probe[3]=frame;put32(probe+4,interval);
-    put32(probe+18,0x003f4a4d);put32(probe+22,2400);
-    if(libusb_control_transfer(u->handle,0x21,0x01,0x0100,kStreamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
-    if(libusb_control_transfer(u->handle,0xa1,0x81,0x0100,kStreamingInterface,probe,sizeof(probe),1500)<26) goto fail_claim;
+    put32(probe+18,0x003f4a4d);put32(probe+22,u->packetSize);
+    if(libusb_control_transfer(u->handle,0x21,0x01,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
+    if(libusb_control_transfer(u->handle,0xa1,0x81,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<26) goto fail_claim;
     // Keep the endpoint transaction capacity selected above. dwMaxPayload is
     // a negotiation result, not an instruction to resize USBFS iso packets.
-    if(!selectAlt(u->handle,static_cast<int>(le32(probe+22)),u->altSetting,u->packetSize))goto fail_claim;
-    if(libusb_control_transfer(u->handle,0x21,0x01,0x0200,kStreamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
-    if(libusb_set_interface_alt_setting(u->handle,kStreamingInterface,u->altSetting)!=0) goto fail_claim;
+    if(u->bulk){
+        const uint32_t negotiated=le32(probe+22);
+        u->packetSize=static_cast<int>(negotiated>=512&&negotiated<=4*1024*1024?negotiated:1024*1024);
+    }else if(!selectAlt(u->handle,u->streamingInterface,u->endpoint,static_cast<int>(le32(probe+22)),u->altSetting,u->packetSize))goto fail_claim;
+    if(libusb_control_transfer(u->handle,0x21,0x01,0x0200,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
+    if(libusb_set_interface_alt_setting(u->handle,u->streamingInterface,u->altSetting)!=0) goto fail_claim;
     u->running=true;
-    for(int n=0;n<kTransfers;++n){
-        auto* t=libusb_alloc_transfer(kPacketsPerTransfer); if(!t) goto fail_running;
-        auto* buffer=new uint8_t[u->packetSize*kPacketsPerTransfer];
-        libusb_fill_iso_transfer(t,u->handle,kEndpoint,buffer,u->packetSize*kPacketsPerTransfer,kPacketsPerTransfer,isoCallback,u,1000);
-        libusb_set_iso_packet_lengths(t,u->packetSize); u->transfers.push_back(t);
-        if(libusb_submit_transfer(t)!=0) goto fail_running;
+    if(u->bulk){
+        u->bulkThread=std::thread([u]{
+            std::vector<uint8_t> buffer(static_cast<size_t>(u->packetSize));
+            while(u->running){
+                int actual=0;
+                const int result=libusb_bulk_transfer(u->handle,u->endpoint,buffer.data(),buffer.size(),&actual,1000);
+                if(result==LIBUSB_ERROR_NO_DEVICE)break;
+                if(result==0&&actual>0)consumePayload(u,buffer.data(),actual);
+            }
+        });
+    }else{
+        for(int n=0;n<kTransfers;++n){
+            auto* t=libusb_alloc_transfer(kPacketsPerTransfer); if(!t) goto fail_running;
+            auto* buffer=new uint8_t[u->packetSize*kPacketsPerTransfer];
+            libusb_fill_iso_transfer(t,u->handle,u->endpoint,buffer,u->packetSize*kPacketsPerTransfer,kPacketsPerTransfer,isoCallback,u,1000);
+            libusb_set_iso_packet_lengths(t,u->packetSize); u->transfers.push_back(t);
+            if(libusb_submit_transfer(t)!=0) goto fail_running;
+        }
+        u->eventThread=std::thread([u]{while(u->running){timeval tv{0,100000};libusb_handle_events_timeout_completed(u->context,&tv,nullptr);}});
     }
-    u->eventThread=std::thread([u]{while(u->running){timeval tv{0,100000};libusb_handle_events_timeout_completed(u->context,&tv,nullptr);}});
     return static_cast<jlong>(reinterpret_cast<intptr_t>(u));
 fail_running: u->running=false;
+    if(u->bulkThread.joinable())u->bulkThread.join();
     for(auto* t:u->transfers)libusb_cancel_transfer(t);
     for(int i=0;i<4;++i){timeval tv{0,50000};libusb_handle_events_timeout_completed(u->context,&tv,nullptr);}
     for(auto* t:u->transfers){delete[] t->buffer;libusb_free_transfer(t);} u->transfers.clear();
-fail_claim: libusb_release_interface(u->handle,kStreamingInterface);
+fail_claim: libusb_release_interface(u->handle,u->streamingInterface);
 fail: if(u->handle)libusb_close(u->handle);if(u->context)libusb_exit(u->context);delete u;return 0;
 }
 
-extern "C" JNIEXPORT jbyteArray JNICALL Java_com_taowen_arglass_BeastCameraNative_readFrame(JNIEnv* env,jobject,jlong p) {
+extern "C" JNIEXPORT jbyteArray JNICALL Java_com_taowen_arglass_UvcCameraNative_readFrame(JNIEnv* env,jobject,jlong p) {
     auto* u=from(p);if(!u)return nullptr;std::unique_lock<std::mutex> lock(u->frameMutex);
     u->frameReady.wait_for(lock,std::chrono::milliseconds(1200),[u]{return !u->frames.empty()||!u->running;});
     if(u->frames.empty())return nullptr;auto frame=std::move(u->frames.front());u->frames.pop_front();lock.unlock();
     auto out=env->NewByteArray(frame.size());env->SetByteArrayRegion(out,0,frame.size(),reinterpret_cast<jbyte*>(frame.data()));return out;
 }
 
-extern "C" JNIEXPORT void JNICALL Java_com_taowen_arglass_BeastCameraNative_stop(JNIEnv*,jobject,jlong p) {
+extern "C" JNIEXPORT void JNICALL Java_com_taowen_arglass_UvcCameraNative_stop(JNIEnv*,jobject,jlong p) {
     auto* u=from(p);if(!u)return;u->running=false;
     for(auto* t:u->transfers)libusb_cancel_transfer(t);
+    if(u->bulkThread.joinable())u->bulkThread.join();
     if(u->eventThread.joinable())u->eventThread.join();
     for(int i=0;i<4;++i){timeval tv{0,50000};libusb_handle_events_timeout_completed(u->context,&tv,nullptr);}
     for(auto* t:u->transfers){delete[] t->buffer;libusb_free_transfer(t);}
-    libusb_set_interface_alt_setting(u->handle,kStreamingInterface,0);libusb_release_interface(u->handle,kStreamingInterface);
+    libusb_set_interface_alt_setting(u->handle,u->streamingInterface,0);libusb_release_interface(u->handle,u->streamingInterface);
     libusb_close(u->handle);libusb_exit(u->context);u->frameReady.notify_all();delete u;
 }

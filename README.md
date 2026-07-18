@@ -8,6 +8,7 @@ Supported models:
 - **XREAL XBX A01** (`3318:0440`, Helen)
 - **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
 - **XREAL One S** (`3318:043E`, GS)
+- **XREAL One** (`3318:0438`, GF)
 - **Rokid Air / Max** (`04D2:162F`)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
@@ -26,6 +27,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
 - `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
+- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and exposes two explicit, independent backends: **官方 SO 读取** uses ARLauncher's XREAL/NR runtime and `StartRGBCameraDataCapture`; **开源 libusb/UVC 读取** negotiates and reads MJPEG without any vendor SO. The open backend requests USB permission only after a matching XREAL One VideoStreaming interface is present.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
@@ -129,9 +131,9 @@ transfers. Native transactions perform framing, request-ID matching, bounded
 asynchronous-event skipping, and route every Android bulk call through the
 shared binary diagnostics recorder.
 
-## XREAL One S protocol notes
+## XREAL One family protocol notes
 
-- Runtime USB identity: `3318:043E` (GS, official type 71). The adjacent odd PID is a bootloader and is not opened as a runtime device.
+- Runtime USB identities: One `3318:0438` (GF, official type 47) and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
 - Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08`.
 - Matching the official One-series `ControlSet2D3DMode` path, preferred modes are
   `10` (1920x1080@90 2D), `4` (3840x1080@72 3D), and `2`
@@ -139,6 +141,8 @@ shared binary diagnostics recorder.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
 - The stream is reassembled into 84-byte frames and exposes acceleration, angular velocity, and the device timestamp in Android-oriented coordinates.
 - The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
+- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable`, XREAL `3318:0438`, an MJPEG UVC gadget, and the `uvc_bulk_15` composite mode. The open implementation therefore negotiates the descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions. It does not redistribute proprietary SDK binaries.
+- To enable the optional official backend locally, run `./scripts/import-xreal-official-camera.sh /path/to/ARLauncher.apk` before building. Imported files live under the gitignored `app/vendorJniLibs/`; normal builds remain independent of ARLauncher and show a precise unavailable error when those files are absent.
 
 ## Rokid Air / Max protocol notes
 

@@ -1,9 +1,9 @@
-package com.taowen.arglass.driver.xreal.ones
+package com.taowen.arglass.driver.xreal.onefamily
 
 import com.taowen.arglass.DisplayMode
 
 /** One-series EGlassMode values passed to ControlSet2D3DMode by XREAL SDK 3.1.0. */
-internal object XrealOneSDisplayModeProtocol {
+internal object XrealOneFamilyDisplayModeProtocol {
     private const val MODE_2D_60HZ = 1
     const val MODE_3D_120HZ = 2
     private const val MODE_3D_60HZ = 3

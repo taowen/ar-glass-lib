@@ -37,7 +37,7 @@ class MainActivity : Activity(), ArGlassesListener {
         content.removeViews(3, (content.childCount - 3).coerceAtLeast(0))
         val glasses = devices.firstOrNull()
         if (glasses == null) {
-            status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One S、Rokid Air / Max、VITURE Beast、LUCI"
+            status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One / One S、Rokid Air / Max、VITURE Beast、LUCI"
             content.addView(Button(this).apply { text = "重新扫描"; setOnClickListener { manager.scan() } }, margins(top = 20))
             return
         }
@@ -45,7 +45,10 @@ class MainActivity : Activity(), ArGlassesListener {
         if (GlassesCapability.IMU in glasses.model.capabilities) addCheckButton("IMU 检测", ImuCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("开启 / 关闭 3D", DisplayModeCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_RESOLUTION in glasses.model.capabilities) addCheckButton("分辨率检测", ResolutionCheckActivity::class.java)
-        if (devices.any { GlassesCapability.CAMERA in it.model.capabilities }) addCheckButton("摄像头检测", CameraCheckActivity::class.java)
+        if (devices.any { it.model.id == "viture_beast" }) addCheckButton("摄像头检测", CameraCheckActivity::class.java)
+        if (devices.any { it.model.id == "xreal_one" || it.model.id == "xreal_one_s" }) {
+            addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
+        }
     }
 
     private fun addCheckButton(caption: String, activity: Class<out Activity>) {

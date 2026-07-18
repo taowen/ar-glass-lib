@@ -7,6 +7,7 @@
         <activity android:name=".DisplayModeCheckActivity" android:exported="false" />
         <activity android:name=".ResolutionCheckActivity" android:exported="false" />
         <activity android:name=".CameraCheckActivity" android:exported="false" />
+        <activity android:name=".XrealEyeCameraCheckActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

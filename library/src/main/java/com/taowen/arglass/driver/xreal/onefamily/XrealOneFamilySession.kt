@@ -1,4 +1,4 @@
-package com.taowen.arglass.driver.xreal.ones
+package com.taowen.arglass.driver.xreal.onefamily
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -17,8 +17,8 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
-/** GS-family split transport: MCU over USB HID, IMU over USB Ethernet TCP. */
-internal class XrealOneSSession(
+/** GF/Gina/GS split transport: MCU over USB HID, IMU over USB Ethernet TCP. */
+internal class XrealOneFamilySession(
     usbManager: UsbManager,
     private val device: UsbDevice,
     private val model: GlassesModel,
@@ -43,12 +43,12 @@ internal class XrealOneSSession(
             response.size >= 24 -> response[23].toInt() and 0xff
             else -> return null
         }
-        return XrealOneSDisplayModeProtocol.decode(value)
+        return XrealOneFamilyDisplayModeProtocol.decode(value)
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
-        val oneSeriesMode = XrealOneSDisplayModeProtocol.encode(mode)
+        val oneSeriesMode = XrealOneFamilyDisplayModeProtocol.encode(mode)
         val payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(oneSeriesMode).array()
         val response = requireNotNull(usb).mcu(0x08, payload)
         return response.size >= 23 && (response[22].toInt() and 0xff) == 0
