@@ -25,6 +25,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `ImuCheckActivity`: opens only the IMU interface and validates its stream.
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
+- `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
@@ -81,6 +82,8 @@ The public native surface provides XREAL MCU/IMU packet construction and version
 - RAW IMU starts with message `0x0301` and payload `02 02` (120 Hz); reports use message `0x7309`.
 - `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
 - The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
+- Beast's monocular camera is a separate `0C45:6368` USB device. The standalone check APK negotiates its 1920×1080@30 MJPEG stream on interface 1 / isochronous endpoint `0x81` when Android does not expose it through Camera2.
+- The native UVC fallback is adapted from `android-sensor-probe`, where this path was verified on Beast hardware. Its vendored LGPL-2.1-or-later libusb subset is built as a separate shared library and retains the upstream license/source files.
 
 ## LUCI protocol notes
 

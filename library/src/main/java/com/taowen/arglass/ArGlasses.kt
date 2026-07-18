@@ -3,7 +3,7 @@ package com.taowen.arglass
 import android.hardware.usb.UsbDevice
 import com.taowen.arglass.driver.GlassesDriverRegistry
 
-enum class GlassesCapability { IMU, DISPLAY_MODE, DISPLAY_RESOLUTION }
+enum class GlassesCapability { IMU, DISPLAY_MODE, DISPLAY_RESOLUTION, CAMERA }
 
 enum class DisplayMode(val wireValue: Int, val expectedWidth: Int, val expectedHeight: Int) {
     MIRROR_2D(1, 1920, 1080),

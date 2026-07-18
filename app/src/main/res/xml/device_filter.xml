@@ -8,4 +8,5 @@
     <usb-device vendor-id="11312" product-id="4144" />
     <usb-device vendor-id="11312" product-id="4145" />
     <usb-device vendor-id="1234" product-id="5679" />
+    <usb-device vendor-id="3141" product-id="25448" />
 </resources>

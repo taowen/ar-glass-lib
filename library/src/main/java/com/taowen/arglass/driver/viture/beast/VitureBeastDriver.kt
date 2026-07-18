@@ -19,7 +19,7 @@ internal object VitureBeastDriver : GlassesDriver {
     override fun identify(device: UsbDevice): GlassesModel? = if (device.vendorId == VID && device.productId in productIds)
         GlassesModel(
             id, "VITURE", "Beast", VID, device.productId,
-            setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
+            setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION, GlassesCapability.CAMERA),
             setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D),
             id,
         ) else null

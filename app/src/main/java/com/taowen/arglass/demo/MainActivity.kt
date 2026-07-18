@@ -45,6 +45,7 @@ class MainActivity : Activity(), ArGlassesListener {
         if (GlassesCapability.IMU in glasses.model.capabilities) addCheckButton("IMU 检测", ImuCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("开启 / 关闭 3D", DisplayModeCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_RESOLUTION in glasses.model.capabilities) addCheckButton("分辨率检测", ResolutionCheckActivity::class.java)
+        if (devices.any { GlassesCapability.CAMERA in it.model.capabilities }) addCheckButton("摄像头检测", CameraCheckActivity::class.java)
     }
 
     private fun addCheckButton(caption: String, activity: Class<out Activity>) {
