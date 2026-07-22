@@ -37,21 +37,21 @@ internal class XrealOneFamilySession(
 
     override fun queryDisplayMode(): DisplayMode? {
         check(displayEnabled) { "This session was not opened for display-mode control" }
-        val response = requireNotNull(usb).mcu(0x07)
-        val value = when {
-            response.size >= 27 -> ByteBuffer.wrap(response, 23, 4).order(ByteOrder.LITTLE_ENDIAN).int
-            response.size >= 24 -> response[23].toInt() and 0xff
-            else -> return null
-        }
-        return XrealOneFamilyDisplayModeProtocol.decode(value)
+        return queryRawDisplayMode()?.let(XrealOneFamilyDisplayModeProtocol::decode)
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
-        val oneSeriesMode = XrealOneFamilyDisplayModeProtocol.encode(mode)
-        val payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(oneSeriesMode).array()
-        val response = requireNotNull(usb).mcu(0x08, payload)
+        val currentMode = queryRawDisplayMode() ?: return false
+        val oneSeriesMode = XrealOneFamilyDisplayModeProtocol.encode(mode, currentMode)
+        if (oneSeriesMode == currentMode) return true
+        val response = requireNotNull(usb).mcu(0x08, byteArrayOf(oneSeriesMode.toByte()))
         return response.size >= 23 && (response[22].toInt() and 0xff) == 0
+    }
+
+    private fun queryRawDisplayMode(): Int? {
+        val response = requireNotNull(usb).mcu(0x07)
+        return response.getOrNull(23)?.toInt()?.and(0xff)
     }
 
     private fun readEthernetImu() {
@@ -99,7 +99,10 @@ internal class XrealOneFamilySession(
         val ax = buffer.getFloat(46); val ay = buffer.getFloat(50); val az = buffer.getFloat(54)
         if (listOf(gx, gy, gz, ax, ay, az).any { !it.isFinite() } || sqrt(ax * ax + ay * ay + az * az) !in 5f..15f) return null
         return ImuSample(
-            buffer.getLong(14) / 1_000L,
+            // The wire value is nanoseconds. xreal_one_driver divides it to
+            // microseconds internally, then XRLinuxDriver converts it back to
+            // nanoseconds before exposing an IMU sample.
+            buffer.getLong(14),
             floatArrayOf(-ax, -az, -ay),
             floatArrayOf(-gx, -gz, -gy),
             null,

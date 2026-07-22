@@ -38,6 +38,14 @@ The standalone APK also has a **导出诊断日志** action. It exports two sepa
 
 Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
 
+When adding or correcting a glasses protocol, first check the
+[`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
+implementations. This directory has broad model coverage and is the preferred
+reference for USB identities, display-mode mappings, IMU transports, packet
+formats, coordinate/unit conversions, and model-specific initialization. Also
+follow any interface-library or device-specific dependency used by the selected
+source file; do not infer a protocol solely from another model in this library.
+
 ## Build
 
 Requires JDK 17, Android SDK 36, and an installed Android NDK/CMake toolchain. Build the independently installable check APK with:
@@ -134,10 +142,11 @@ shared binary diagnostics recorder.
 ## XREAL One family protocol notes
 
 - Runtime USB identities: One `3318:0438` (GF, official type 47) and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
-- Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08`.
-- Matching the official One-series `ControlSet2D3DMode` path, preferred modes are
-  `10` (1920x1080@90 2D), `4` (3840x1080@72 3D), and `2`
-  (3840x1080@120 3D). The official mode table has no Half SBS entry.
+- Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08` and a one-byte mode payload.
+- Switching preserves the current refresh-rate family: `1` <-> `3` for 60 Hz,
+  `5` <-> `4` for 72 Hz, and `10` <-> `9` for 90 Hz. Mono 120 Hz (`11`)
+  maps to the highest available SBS mode, 90 Hz (`9`); the MCU table has no
+  120 Hz SBS mode. Value `8` is the separate 1920x1080@60 SBS mode.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
 - The stream is reassembled into 84-byte frames and exposes acceleration, angular velocity, and the device timestamp in Android-oriented coordinates.
 - The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
