@@ -5,7 +5,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.driver.DriverSession
-import com.taowen.arglass.driver.tracedControlTransfer
+import com.taowen.arglass.driver.NativeUsbDeviceSession
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class LuciDisplaySession(
@@ -16,11 +16,10 @@ internal class LuciDisplaySession(
     private val hidInterface = (0 until device.interfaceCount).map(device::getInterface)
         .firstOrNull { it.interfaceClass == UsbConstants.USB_CLASS_HID }
         ?: error("LUCI HID interface not found")
-    private val connection = requireNotNull(usbManager.openDevice(device)) { "Cannot open LUCI USB device" }
+    private val usb = NativeUsbDeviceSession(usbManager, device)
 
     init {
-        check(connection.claimInterface(hidInterface, true)) { "Cannot claim LUCI HID interface ${hidInterface.id}" }
-        connection.setInterface(hidInterface)
+        check(usb.claim(hidInterface)) { "Cannot claim LUCI HID interface ${hidInterface.id}" }
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
@@ -30,14 +29,12 @@ internal class LuciDisplaySession(
             else -> return false
         }
         val report = LuciDisplayProtocol.powerStateReport(enable3d)
-        val transferred = connection.tracedControlTransfer(
-            device,
+        val transferred = usb.control(
             LuciDisplayProtocol.HID_SET_REPORT_REQUEST_TYPE,
             LuciDisplayProtocol.HID_SET_REPORT,
             LuciDisplayProtocol.HID_FEATURE_REPORT_ID_2,
             hidInterface.id,
             report,
-            report.size,
             LuciDisplayProtocol.USB_TIMEOUT_MS,
         )
         return transferred >= 0
@@ -45,7 +42,7 @@ internal class LuciDisplaySession(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        connection.releaseInterface(hidInterface)
-        connection.close()
+        usb.release(hidInterface)
+        usb.close()
     }
 }

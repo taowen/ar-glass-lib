@@ -1,9 +1,12 @@
 #include "ar_glass.h"
+#include "usb_trace.h"
 
 #include <jni.h>
 #include <android/log.h>
+#include <libusb.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 
@@ -24,80 +27,71 @@ jbyteArray to_array(JNIEnv* env, const std::vector<std::uint8_t>& bytes) {
 namespace {
 class XrealUsbSession {
 public:
-    XrealUsbSession(JNIEnv* env, jobject connection, jobject device, jobject mcu_interface,
-                    jobject mcu_in, jobject mcu_out, jobject imu_interface, jobject imu_in, jobject imu_out)
-        : connection_(env->NewGlobalRef(connection)), device_(env->NewGlobalRef(device)),
-          mcu_interface_(global(env, mcu_interface)), mcu_in_(global(env, mcu_in)), mcu_out_(global(env, mcu_out)),
-          imu_interface_(global(env, imu_interface)), imu_in_(global(env, imu_in)), imu_out_(global(env, imu_out)) {
-        const auto cls = env->GetObjectClass(connection);
-        claim_ = env->GetMethodID(cls, "claimInterface", "(Landroid/hardware/usb/UsbInterface;Z)Z");
-        release_ = env->GetMethodID(cls, "releaseInterface", "(Landroid/hardware/usb/UsbInterface;)Z");
-        close_ = env->GetMethodID(cls, "close", "()V");
-        env->DeleteLocalRef(cls);
-        const auto bridge = env->FindClass("com/taowen/arglass/NativeBridge");
-        transfer_ = env->GetStaticMethodID(bridge, "tracedTransfer",
-            "(Landroid/hardware/usb/UsbDeviceConnection;Landroid/hardware/usb/UsbDevice;Landroid/hardware/usb/UsbEndpoint;[BI)I");
-        bridge_ = reinterpret_cast<jclass>(env->NewGlobalRef(bridge));
-        env->DeleteLocalRef(bridge);
-        if (mcu_interface_ && !env->CallBooleanMethod(connection_, claim_, mcu_interface_, JNI_TRUE))
+    XrealUsbSession(int fd, int vid, int pid, int mcu_interface, int mcu_in, int mcu_out,
+                    int imu_interface, int imu_in, int imu_out)
+        : vid_(vid), pid_(pid), mcu_interface_(mcu_interface), mcu_in_(mcu_in), mcu_out_(mcu_out),
+          imu_interface_(imu_interface), imu_in_(imu_in), imu_out_(imu_out) {
+        if (libusb_init(&context_) != 0 || libusb_wrap_sys_device(context_, fd, &handle_) != 0)
+            throw std::runtime_error("Cannot wrap XREAL USB file descriptor");
+        if (mcu_interface_ >= 0 && libusb_claim_interface(handle_, mcu_interface_) != 0)
             throw std::runtime_error("Cannot claim XREAL MCU interface");
-        if (imu_interface_ && !env->CallBooleanMethod(connection_, claim_, imu_interface_, JNI_TRUE))
+        if (imu_interface_ >= 0 && libusb_claim_interface(handle_, imu_interface_) != 0)
             throw std::runtime_error("Cannot claim XREAL IMU interface");
     }
 
-    std::vector<std::uint8_t> mcu(JNIEnv* env, std::uint16_t command, std::span<const std::uint8_t> payload) {
+    std::vector<std::uint8_t> mcu(JNIEnv*, std::uint16_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
         const auto id = request_id_++;
-        return transact(env, mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, id, payload), 0xfd, command, id);
+        return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, id, payload), 0xfd, command, id);
     }
-    std::vector<std::uint8_t> imu(JNIEnv* env, std::uint8_t command, std::span<const std::uint8_t> payload) {
+    std::vector<std::uint8_t> imu(JNIEnv*, std::uint8_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
-        return transact(env, imu_out_, imu_in_, ar_glass::make_imu_command(command, payload), 0xaa, command, -1);
+        return transact(imu_out_, imu_in_, ar_glass::make_imu_command(command, payload), 0xaa, command, -1);
     }
-    std::vector<std::uint8_t> read_imu(JNIEnv* env, int timeout) {
-        return read(env, imu_in_, 64, timeout);
+    std::vector<std::uint8_t> read_imu(JNIEnv*, int timeout) {
+        return read(imu_in_, 64, timeout);
     }
-    void close(JNIEnv* env) {
+    void close(JNIEnv*) {
         if (!running_.exchange(false)) return;
-        if (imu_interface_) env->CallBooleanMethod(connection_, release_, imu_interface_);
-        if (mcu_interface_) env->CallBooleanMethod(connection_, release_, mcu_interface_);
-        env->CallVoidMethod(connection_, close_);
+        if (imu_interface_ >= 0) libusb_release_interface(handle_, imu_interface_);
+        if (mcu_interface_ >= 0) libusb_release_interface(handle_, mcu_interface_);
+        if (handle_) libusb_close(handle_);
+        if (context_) libusb_exit(context_);
+        handle_ = nullptr; context_ = nullptr;
     }
     ~XrealUsbSession() = default;
     void destroy(JNIEnv* env) {
         close(env);
-        for (auto ref : {connection_, device_, mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_})
-            if (ref) env->DeleteGlobalRef(ref);
-        env->DeleteGlobalRef(bridge_);
     }
 
 private:
-    static jobject global(JNIEnv* env, jobject value) { return value ? env->NewGlobalRef(value) : nullptr; }
-    int transfer(JNIEnv* env, jobject endpoint, jbyteArray bytes, int timeout) {
-        return env->CallStaticIntMethod(bridge_, transfer_, connection_, device_, endpoint, bytes, timeout);
+    int transfer(int endpoint, std::uint8_t* bytes, int size, int timeout) {
+        int actual = 0;
+        // XREAL MCU/IMU endpoints are HID interrupt endpoints. Android's
+        // bulkTransfer accepts both bulk and interrupt endpoints; libusb keeps
+        // them as separate APIs, so use the actual HID transfer type here.
+        const int result = libusb_interrupt_transfer(handle_, static_cast<unsigned char>(endpoint), bytes, size, &actual, timeout);
+        const int returned = result == 0 ? actual : result;
+        const bool input = (endpoint & LIBUSB_ENDPOINT_DIR_MASK) != 0;
+        ar_glass::record_usb_transfer(vid_, pid_, input ? 1 : 2, endpoint, 0, 0, 0, returned,
+            bytes, input ? static_cast<std::size_t>(std::max(actual, 0)) : static_cast<std::size_t>(size));
+        return returned;
     }
-    std::vector<std::uint8_t> read(JNIEnv* env, jobject endpoint, int size, int timeout) {
+    std::vector<std::uint8_t> read(int endpoint, int size, int timeout) {
         if (!endpoint || !running_) return {};
-        auto array = env->NewByteArray(size);
-        const int length = transfer(env, endpoint, array, timeout);
-        std::vector<std::uint8_t> result;
-        if (length > 0) {
-            result.resize(length);
-            env->GetByteArrayRegion(array, 0, length, reinterpret_cast<jbyte*>(result.data()));
-        }
-        env->DeleteLocalRef(array);
+        std::vector<std::uint8_t> result(size);
+        const int length = transfer(endpoint, result.data(), size, timeout);
+        if (length > 0) result.resize(length); else result.clear();
         return result;
     }
-    std::vector<std::uint8_t> transact(JNIEnv* env, jobject out, jobject in,
+    std::vector<std::uint8_t> transact(int out, int in,
             const std::vector<std::uint8_t>& request, int magic, int command, std::int64_t id) {
         if (!out || !in || !running_) return {};
-        auto array = to_array(env, request);
-        const int written = transfer(env, out, array, 750);
-        env->DeleteLocalRef(array);
+        const int written = transfer(out, const_cast<std::uint8_t*>(request.data()), request.size(), 750);
         if (written != static_cast<int>(request.size())) return {};
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (running_ && std::chrono::steady_clock::now() < deadline) {
-            auto response = read(env, in, 64, 500);
+            auto response = read(in, 64, 500);
             if (response.size() < 8 || response[0] != magic) continue;
             const int response_command = magic == 0xfd && response.size() >= 17
                 ? response[15] | response[16] << 8 : response[7];
@@ -109,15 +103,53 @@ private:
         return {};
     }
 
-    jobject connection_, device_, mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
-    jclass bridge_;
-    jmethodID claim_, release_, close_, transfer_;
+    libusb_context* context_ = nullptr;
+    libusb_device_handle* handle_ = nullptr;
+    [[maybe_unused]] int vid_, pid_;
+    int mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
     std::mutex command_mutex_;
     std::atomic_bool running_{true};
     std::uint32_t request_id_{1};
 };
 
 XrealUsbSession* session(jlong handle) { return reinterpret_cast<XrealUsbSession*>(handle); }
+
+class UsbSession {
+public:
+    UsbSession(int fd, int vid, int pid) : vid_(vid), pid_(pid) {
+        if (libusb_init(&context_) != 0 || libusb_wrap_sys_device(context_, fd, &handle_) != 0)
+            throw std::runtime_error("Cannot wrap USB file descriptor");
+    }
+    ~UsbSession() {
+        if (handle_) libusb_close(handle_);
+        if (context_) libusb_exit(context_);
+    }
+    bool claim(int id) { return libusb_claim_interface(handle_, id) == 0; }
+    void release(int id) { libusb_release_interface(handle_, id); }
+    int endpoint(int address, bool interrupt, std::uint8_t* data, int size, int timeout) {
+        int actual = 0;
+        const int rc = interrupt
+            ? libusb_interrupt_transfer(handle_, address, data, size, &actual, timeout)
+            : libusb_bulk_transfer(handle_, address, data, size, &actual, timeout);
+        const int returned = rc == 0 ? actual : rc;
+        const bool input = (address & LIBUSB_ENDPOINT_DIR_MASK) != 0;
+        ar_glass::record_usb_transfer(vid_, pid_, input ? 1 : 2, address, 0, 0, 0, returned,
+            data, input ? static_cast<std::size_t>(std::max(actual, 0)) : static_cast<std::size_t>(size));
+        return returned;
+    }
+    int control(int request_type, int request, int value, int index, std::uint8_t* data, int size, int timeout) {
+        const int result = libusb_control_transfer(handle_, request_type, request, value, index, data, size, timeout);
+        const bool input = (request_type & LIBUSB_ENDPOINT_DIR_MASK) != 0;
+        ar_glass::record_usb_transfer(vid_, pid_, input ? 1 : 2, request_type, request, value, index, result,
+            data, input ? static_cast<std::size_t>(std::max(result, 0)) : static_cast<std::size_t>(size));
+        return result;
+    }
+private:
+    libusb_context* context_ = nullptr;
+    libusb_device_handle* handle_ = nullptr;
+    int vid_, pid_;
+};
+UsbSession* usb_session(jlong handle) { return reinterpret_cast<UsbSession*>(handle); }
 } // namespace
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -150,9 +182,9 @@ Java_com_taowen_arglass_NativeBridge_decodeImuReport(JNIEnv* env, jobject, jbyte
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_taowen_arglass_NativeBridge_createXrealUsbSession(JNIEnv* env, jobject, jobject connection, jobject device,
-        jobject mcu_interface, jobject mcu_in, jobject mcu_out, jobject imu_interface, jobject imu_in, jobject imu_out) {
-    try { return reinterpret_cast<jlong>(new XrealUsbSession(env, connection, device, mcu_interface, mcu_in, mcu_out,
+Java_com_taowen_arglass_NativeBridge_createXrealUsbSession(JNIEnv* env, jobject, jint fd, jint vid, jint pid,
+        jint mcu_interface, jint mcu_in, jint mcu_out, jint imu_interface, jint imu_in, jint imu_out) {
+    try { return reinterpret_cast<jlong>(new XrealUsbSession(fd, vid, pid, mcu_interface, mcu_in, mcu_out,
                                                              imu_interface, imu_in, imu_out)); }
     catch (const std::exception& error) {
         __android_log_print(ANDROID_LOG_ERROR, "ArGlassNative", "%s", error.what());
@@ -181,4 +213,50 @@ Java_com_taowen_arglass_NativeBridge_closeXrealUsbSession(JNIEnv* env, jobject, 
     auto* value = session(handle);
     value->destroy(env);
     delete value;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_taowen_arglass_NativeBridge_createUsbSession(JNIEnv* env, jobject, jint fd, jint vid, jint pid) {
+    try { return reinterpret_cast<jlong>(new UsbSession(fd, vid, pid)); }
+    catch (const std::exception& error) {
+        const auto exception = env->FindClass("java/lang/IllegalStateException");
+        env->ThrowNew(exception, error.what());
+        return 0;
+    }
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_taowen_arglass_NativeBridge_usbClaimInterface(JNIEnv*, jobject, jlong handle, jint id) {
+    return usb_session(handle)->claim(id);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_taowen_arglass_NativeBridge_usbReleaseInterface(JNIEnv*, jobject, jlong handle, jint id) {
+    usb_session(handle)->release(id);
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_taowen_arglass_NativeBridge_usbEndpointTransfer(JNIEnv* env, jobject, jlong handle, jint endpoint,
+        jboolean interrupt, jbyteArray buffer, jint timeout) {
+    auto bytes = to_vector(env, buffer);
+    const int result = usb_session(handle)->endpoint(endpoint, interrupt, bytes.data(), bytes.size(), timeout);
+    if (result > 0 && (endpoint & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
+        env->SetByteArrayRegion(buffer, 0, result, reinterpret_cast<const jbyte*>(bytes.data()));
+    return result;
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_taowen_arglass_NativeBridge_usbControlTransfer(JNIEnv* env, jobject, jlong handle, jint request_type,
+        jint request, jint value, jint index, jbyteArray buffer, jint timeout) {
+    auto bytes = to_vector(env, buffer);
+    const int result = usb_session(handle)->control(request_type, request, value, index, bytes.data(), bytes.size(), timeout);
+    if (result > 0 && (request_type & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
+        env->SetByteArrayRegion(buffer, 0, result, reinterpret_cast<const jbyte*>(bytes.data()));
+    return result;
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_taowen_arglass_NativeBridge_closeUsbSession(JNIEnv*, jobject, jlong handle) {
+    delete usb_session(handle);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_taowen_arglass_NativeBridge_configureUsbDiagnostics(JNIEnv* env, jobject, jstring path) {
+    const char* value = env->GetStringUTFChars(path, nullptr);
+    ar_glass::configure_usb_trace(value);
+    env->ReleaseStringUTFChars(path, value);
 }

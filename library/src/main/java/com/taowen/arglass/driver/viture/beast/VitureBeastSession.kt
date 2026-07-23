@@ -2,7 +2,6 @@ package com.taowen.arglass.driver.viture.beast
 
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
@@ -11,8 +10,7 @@ import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
-import com.taowen.arglass.driver.tracedBulkTransfer
-import com.taowen.arglass.driver.tracedControlTransfer
+import com.taowen.arglass.driver.NativeUsbDeviceSession
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -28,7 +26,7 @@ internal class VitureBeastSession(
     private data class HidPort(val usbInterface: UsbInterface, val input: UsbEndpoint?, val output: UsbEndpoint?)
 
     private val running = AtomicBoolean(true)
-    private val connection: UsbDeviceConnection = requireNotNull(usbManager.openDevice(device)) { "Cannot open USB device" }
+    private val usb = NativeUsbDeviceSession(usbManager, device)
     private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
     private val ports = (0 until device.interfaceCount).map(device::getInterface)
         .filter { it.interfaceClass == UsbConstants.USB_CLASS_HID }
@@ -49,7 +47,7 @@ internal class VitureBeastSession(
 
     init {
         check(ports.isNotEmpty()) { "VITURE Beast has no HID protocol interfaces" }
-        ports.forEach { check(connection.claimInterface(it.usbInterface, true)) { "Cannot claim Beast HID interface ${it.usbInterface.id}" } }
+        ports.forEach { check(usb.claim(it.usbInterface)) { "Cannot claim Beast HID interface ${it.usbInterface.id}" } }
         if (imuEnabled) {
             ports.mapNotNull { it.input }.forEach { input ->
                 Thread({ readLoop(input) }, "viture-beast-hid-${input.address}").also { workers += it; it.start() }
@@ -103,8 +101,8 @@ internal class VitureBeastSession(
     private fun send(command: ByteArray): Boolean {
         var sent = false
         ports.forEach { port ->
-            val count = port.output?.let { output -> connection.tracedBulkTransfer(device, output, command, command.size, 500) }
-                ?: connection.tracedControlTransfer(device, 0x21, 0x09, 0x0200, port.usbInterface.id, command, command.size, 500)
+            val count = port.output?.let { output -> usb.transfer(output, command, 500) }
+                ?: usb.control(0x21, 0x09, 0x0200, port.usbInterface.id, command, 500)
             if (count == command.size) sent = true
         }
         return sent
@@ -118,7 +116,7 @@ internal class VitureBeastSession(
             } else {
                 ports.mapNotNull { it.input }.forEach { input ->
                     val bytes = ByteArray(maxOf(64, input.maxPacketSize))
-                    val length = connection.tracedBulkTransfer(device, input, bytes, bytes.size, 80)
+                    val length = usb.transfer(input, bytes, 80)
                     if (length > 0) handlePacket(bytes, length)
                 }
             }
@@ -129,7 +127,7 @@ internal class VitureBeastSession(
     private fun readLoop(input: UsbEndpoint) {
         val bytes = ByteArray(maxOf(64, input.maxPacketSize))
         while (running.get()) {
-            val length = connection.tracedBulkTransfer(device, input, bytes, bytes.size, 750)
+            val length = usb.transfer(input, bytes, 750)
             if (length > 0) handlePacket(bytes.copyOf(length), length)
         }
     }
@@ -160,7 +158,7 @@ internal class VitureBeastSession(
     override fun close() {
         if (!running.getAndSet(false)) return
         workers.forEach(Thread::interrupt); workers.forEach { if (Thread.currentThread() !== it) it.join(1200) }
-        ports.forEach { connection.releaseInterface(it.usbInterface) }
-        connection.close()
+        ports.forEach { usb.release(it.usbInterface) }
+        usb.close()
     }
 }

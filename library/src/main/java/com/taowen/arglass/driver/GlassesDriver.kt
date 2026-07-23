@@ -10,10 +10,14 @@ import com.taowen.arglass.driver.viture.beast.VitureBeastDriver
 import com.taowen.arglass.driver.luci.LuciDriver
 import com.taowen.arglass.driver.rokid.air.RokidAirDriver
 import com.taowen.arglass.driver.xreal.air2ultra.XrealAir2UltraDriver
+import com.taowen.arglass.driver.xreal.air.XrealAirDriver
+import com.taowen.arglass.driver.xreal.air2.XrealAir2Driver
+import com.taowen.arglass.driver.xreal.air2pro.XrealAir2ProDriver
 import com.taowen.arglass.driver.xreal.xbxa01.XrealXbxA01Driver
 import com.taowen.arglass.driver.xreal.xbxa01plus.XrealXbxA01PlusDriver
 import com.taowen.arglass.driver.xreal.ones.XrealOneSDriver
 import com.taowen.arglass.driver.xreal.one.XrealOneDriver
+import com.taowen.arglass.driver.xreal.onepro.XrealOneProDriver
 import java.io.Closeable
 import java.util.concurrent.Executor
 
@@ -37,9 +41,13 @@ internal interface DriverSession : Closeable {
 
 internal object GlassesDriverRegistry {
     private val drivers: List<GlassesDriver> = listOf(
+        XrealAirDriver,
+        XrealAir2Driver,
+        XrealAir2ProDriver,
         XrealAir2UltraDriver,
         XrealXbxA01Driver,
         XrealXbxA01PlusDriver,
+        XrealOneProDriver,
         XrealOneDriver,
         XrealOneSDriver,
         RokidAirDriver,

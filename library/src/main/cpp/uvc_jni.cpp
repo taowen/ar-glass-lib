@@ -1,5 +1,7 @@
 #include <jni.h>
 #include <libusb.h>
+#include "usb_trace.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -35,8 +37,25 @@ struct Uvc {
     uint8_t streamingInterface = 0;
     uint8_t endpoint = 0;
     bool bulk = false;
+    int vid = 0;
+    int pid = 0;
     std::thread bulkThread;
 };
+
+int control(Uvc* u,int type,int request,int value,int index,uint8_t* data,int size,int timeout){
+    const int result=libusb_control_transfer(u->handle,type,request,value,index,data,size,timeout);
+    const bool input=(type&LIBUSB_ENDPOINT_DIR_MASK)!=0;
+    ar_glass::record_usb_transfer(u->vid,u->pid,input?1:2,type,request,value,index,result,data,
+        input?static_cast<size_t>(std::max(result,0)):static_cast<size_t>(size));
+    return result;
+}
+int bulk(Uvc* u,uint8_t endpoint,uint8_t* data,int size,int* actual,int timeout){
+    const int rc=libusb_bulk_transfer(u->handle,endpoint,data,size,actual,timeout);
+    const int result=rc==0?*actual:rc;const bool input=(endpoint&LIBUSB_ENDPOINT_DIR_MASK)!=0;
+    ar_glass::record_usb_transfer(u->vid,u->pid,input?1:2,endpoint,0,0,0,result,data,
+        input?static_cast<size_t>(std::max(*actual,0)):static_cast<size_t>(size));
+    return rc;
+}
 
 Uvc* from(jlong p) { return reinterpret_cast<Uvc*>(static_cast<intptr_t>(p)); }
 uint32_t le32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24; }
@@ -85,8 +104,11 @@ void LIBUSB_CALL isoCallback(libusb_transfer* transfer) {
     if (transfer->status == LIBUSB_TRANSFER_COMPLETED) {
         for (int i=0; i<transfer->num_iso_packets; ++i) {
             const auto& packet = transfer->iso_packet_desc[i];
-            if (packet.status == LIBUSB_TRANSFER_COMPLETED && packet.actual_length)
-                consumePayload(u, libusb_get_iso_packet_buffer_simple(transfer, i), packet.actual_length);
+            if (packet.status == LIBUSB_TRANSFER_COMPLETED && packet.actual_length) {
+                auto* payload=libusb_get_iso_packet_buffer_simple(transfer,i);
+                ar_glass::record_usb_transfer(u->vid,u->pid,1,u->endpoint,0,0,0,packet.actual_length,payload,packet.actual_length);
+                consumePayload(u, payload, packet.actual_length);
+            }
             else if (packet.status != LIBUSB_TRANSFER_COMPLETED) u->frameError=true;
         }
     }
@@ -158,22 +180,23 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_UvcCameraNative_start
     uint8_t format=0,frame=0; uint32_t interval=333333; uint8_t probe[26]{};
     libusb_set_option(nullptr, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, nullptr);
     if(libusb_init(&u->context)!=0 || libusb_wrap_sys_device(u->context, fd, &u->handle)!=0) goto fail;
+    { libusb_device_descriptor descriptor{}; if(libusb_get_device_descriptor(libusb_get_device(u->handle),&descriptor)==0){u->vid=descriptor.idVendor;u->pid=descriptor.idProduct;} }
     if(!findFormat(u->handle,u,format,frame,interval)) goto fail;
     if(libusb_kernel_driver_active(u->handle,u->streamingInterface)==1) libusb_detach_kernel_driver(u->handle,u->streamingInterface);
     if(libusb_claim_interface(u->handle,u->streamingInterface)!=0) goto fail;
     // UVC 1.1 probe/commit sequence used by both the Beast fallback and generic cameras.
-    libusb_control_transfer(u->handle,0xa1,0x83,0x0100,u->streamingInterface,probe,sizeof(probe),1500);
+    control(u,0xa1,0x83,0x0100,u->streamingInterface,probe,sizeof(probe),1500);
     std::memset(probe,0,sizeof(probe));probe[0]=1;probe[2]=format;probe[3]=frame;put32(probe+4,interval);
     put32(probe+18,0x003f4a4d);put32(probe+22,u->packetSize);
-    if(libusb_control_transfer(u->handle,0x21,0x01,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
-    if(libusb_control_transfer(u->handle,0xa1,0x81,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<26) goto fail_claim;
+    if(control(u,0x21,0x01,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
+    if(control(u,0xa1,0x81,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<26) goto fail_claim;
     // Keep the endpoint transaction capacity selected above. dwMaxPayload is
     // a negotiation result, not an instruction to resize USBFS iso packets.
     if(u->bulk){
         const uint32_t negotiated=le32(probe+22);
         u->packetSize=static_cast<int>(negotiated>=512&&negotiated<=4*1024*1024?negotiated:1024*1024);
     }else if(!selectAlt(u->handle,u->streamingInterface,u->endpoint,static_cast<int>(le32(probe+22)),u->altSetting,u->packetSize))goto fail_claim;
-    if(libusb_control_transfer(u->handle,0x21,0x01,0x0200,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
+    if(control(u,0x21,0x01,0x0200,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
     if(libusb_set_interface_alt_setting(u->handle,u->streamingInterface,u->altSetting)!=0) goto fail_claim;
     u->running=true;
     if(u->bulk){
@@ -181,7 +204,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_UvcCameraNative_start
             std::vector<uint8_t> buffer(static_cast<size_t>(u->packetSize));
             while(u->running){
                 int actual=0;
-                const int result=libusb_bulk_transfer(u->handle,u->endpoint,buffer.data(),buffer.size(),&actual,1000);
+                const int result=bulk(u,u->endpoint,buffer.data(),buffer.size(),&actual,1000);
                 if(result==LIBUSB_ERROR_NO_DEVICE)break;
                 if(result==0&&actual>0)consumePayload(u,buffer.data(),actual);
             }

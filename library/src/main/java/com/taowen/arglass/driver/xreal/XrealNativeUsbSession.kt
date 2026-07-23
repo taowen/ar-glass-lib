@@ -15,15 +15,21 @@ internal class XrealNativeUsbSession(
     device: UsbDevice,
     useMcu: Boolean,
     useImu: Boolean,
+    mcuInterfaceId: Int = 0,
+    imuInterfaceId: Int = 1,
 ) : Closeable {
     private val connection = requireNotNull(usbManager.openDevice(device)) { "Cannot open XREAL USB device" }
-    private val mcuInterface = if (useMcu) device.interfaceById(0) else null
-    private val imuInterface = if (useImu) device.interfaceById(1) else null
+    private val mcuInterface = if (useMcu) device.interfaceById(mcuInterfaceId) else null
+    private val imuInterface = if (useImu) device.interfaceById(imuInterfaceId) else null
     private val closed = AtomicBoolean(false)
     private val handle = NativeBridge.createXrealUsbSession(
-        connection, device,
-        mcuInterface, mcuInterface?.inputEndpoint(), mcuInterface?.outputEndpoint(),
-        imuInterface, imuInterface?.inputEndpoint(), imuInterface?.outputEndpoint(),
+        connection.fileDescriptor, device.vendorId, device.productId,
+        mcuInterface?.id ?: -1,
+        mcuInterface?.inputEndpoint()?.address ?: 0,
+        mcuInterface?.outputEndpoint()?.address ?: 0,
+        imuInterface?.id ?: -1,
+        imuInterface?.inputEndpoint()?.address ?: 0,
+        imuInterface?.outputEndpoint()?.address ?: 0,
     )
 
     fun mcu(command: Int, payload: ByteArray = byteArrayOf()): ByteArray =

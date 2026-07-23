@@ -4,12 +4,15 @@ Android library and standalone check app for USB-C AR glasses.
 
 Supported models:
 
+- **XREAL Air** (`3318:0424`, Air)
+- **XREAL Air 2** (`3318:0428`, P55)
+- **XREAL Air 2 Pro** (`3318:0432`, P55E)
 - **XREAL Air 2 Ultra** (`3318:0426`, Flora)
 - **XREAL XBX A01** (`3318:0440`, Helen)
 - **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
 - **XREAL One S** (`3318:043E`, GS)
 - **XREAL One** (`3318:0438`, GF)
-- **Rokid Air / Max** (`04D2:162F`)
+- **Rokid glasses** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, `2002`, and `2180`; product string supplies the market name)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
 
@@ -38,13 +41,24 @@ The standalone APK also has a **导出诊断日志** action. It exports two sepa
 
 Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
 
-When adding or correcting a glasses protocol, first check the
-[`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
-implementations. This directory has broad model coverage and is the preferred
-reference for USB identities, display-mode mappings, IMU transports, packet
-formats, coordinate/unit conversions, and model-specific initialization. Also
-follow any interface-library or device-specific dependency used by the selected
-source file; do not infer a protocol solely from another model in this library.
+When adding or correcting a glasses protocol, cross-check these open-source
+references:
+
+- [`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
+  has broad model coverage and is the preferred starting point for USB
+  identities, display-mode mappings, initialization, and the interface library
+  selected for each device.
+- [`android-sensor-probe`](https://github.com/taowen/android-sensor-probe)
+  provides Android USB Host, permission, JNI, and hardware-check examples, plus
+  Android ports of several glasses protocols.
+- [`ar-drivers-rs`](https://github.com/badicsalex/ar-drivers-rs) provides
+  compact Rust implementations of multiple glasses drivers and is especially
+  useful for verifying raw packet layouts, commands, IMU decoding, coordinate
+  transforms, and unit conversions.
+
+Follow any interface-library or device-specific dependency used by a reference
+implementation. Compare independent implementations where possible; do not
+infer one model's protocol solely from another model in this library.
 
 ## Build
 
@@ -83,7 +97,9 @@ add_subdirectory(path/to/ar-glass-lib/library/src/main/cpp ar-glass-lib)
 target_link_libraries(your_jni_target PRIVATE ar_glass)
 ```
 
-The public native surface provides XREAL MCU/IMU packet construction and versioned IMU decoding without requiring the standalone JNI adapter.
+The public native surface provides XREAL MCU/IMU packet construction and versioned IMU decoding without requiring the standalone JNI adapter. In the Android library, Kotlin enumerates descriptors and handles permission/UI only. Interface claims and all control, bulk, interrupt, and UVC transfers execute through JNI/libusb; Kotlin production sources do not call Android USB transfer APIs.
+
+The native transport records every control, bulk, interrupt, and UVC transfer directly to `usb-transfers.bin`. Android-fd and direct-libusb camera paths use the same `ARUS` binary record format.
 
 ## VITURE Beast protocol notes
 
@@ -118,6 +134,12 @@ Flora's official mode table has no Half SBS entry. Unlike Helen, Flora encodes
 the command `0x08` mode payload as one byte; this matches the previously
 hardware-validated implementation and `ar-drivers-rs`.
 
+## XREAL Air family protocol notes
+
+- Air `3318:0424`, Air 2 `3318:0428`, and Air 2 Pro `3318:0432` use MCU interface 4 and IMU interface 3.
+- All three use the one-byte `0x07` / `0x08` display-mode protocol and expose 2D, Full SBS, Half SBS, and 90 Hz SBS modes.
+- Their 64-byte versioned IMU reports and initialization commands are cross-checked against both `ar-drivers-rs` and XRLinuxDriver's `xrealInterfaceLibrary`.
+
 ## XREAL XBX protocol notes
 
 - XBX A01 uses `3318:0440`; XBX A01 Plus uses `3318:0442`.
@@ -133,15 +155,14 @@ hardware-validated implementation and `ar-drivers-rs`.
   as four-byte little-endian integers, matching the official `int EGlassMode` ABI.
 
 All XREAL USB interfaces and transfers are owned by `XrealNativeUsbSession` in
-JNI. Kotlin retains Android device enumeration/permission and the One-family
-USB-Ethernet TCP reader, but does not claim interfaces or issue XREAL endpoint
+JNI/libusb. Kotlin retains Android device enumeration/permission and the
+One-family USB-Ethernet TCP reader, but does not claim interfaces or issue USB
 transfers. Native transactions perform framing, request-ID matching, bounded
-asynchronous-event skipping, and route every Android bulk call through the
-shared binary diagnostics recorder.
+asynchronous-event skipping, and write the shared binary diagnostics stream.
 
 ## XREAL One family protocol notes
 
-- Runtime USB identities: One `3318:0438` (GF, official type 47) and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
+- Runtime USB identities: One Pro `3318:0436` (Gina, official type 41), One `3318:0438` (GF, official type 47), and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
 - Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08` and a one-byte mode payload.
 - Switching preserves the current refresh-rate family: `1` <-> `3` for 60 Hz,
   `5` <-> `4` for 72 Hz, and `10` <-> `9` for 90 Hz. Mono 120 Hz (`11`)
@@ -159,3 +180,4 @@ shared binary diagnostics recorder.
 - IMU, magnetometer, keys, and proximity reports arrive passively on interrupt endpoint `0x82`.
 - Display-mode vendor control transfers query and switch mirrored 2D, Full SBS 3D, high-refresh 2D, and high-refresh SBS 3D.
 - The implementation follows the MIT-licensed `ar-drivers-rs` Rokid driver and its Android port in `android-sensor-probe`.
+- **XREAL One Pro** (`3318:0436`, Gina)

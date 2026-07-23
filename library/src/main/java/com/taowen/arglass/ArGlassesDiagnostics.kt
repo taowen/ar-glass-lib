@@ -23,6 +23,7 @@ object ArGlassesDiagnostics {
         if (directory != null) return
         synchronized(lock) {
             if (directory == null) directory = File(context.filesDir, "diagnostics").apply { mkdirs() }
+            NativeBridge.configureUsbDiagnostics(File(requireNotNull(directory), USB_FILE).absolutePath)
         }
     }
 

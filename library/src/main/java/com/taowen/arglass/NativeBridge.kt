@@ -1,11 +1,5 @@
 package com.taowen.arglass
 
-import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbDeviceConnection
-import android.hardware.usb.UsbEndpoint
-import android.hardware.usb.UsbInterface
-import com.taowen.arglass.driver.tracedBulkTransfer
-
 internal object NativeBridge {
     init { System.loadLibrary("ar_glass") }
 
@@ -14,27 +8,28 @@ internal object NativeBridge {
     external fun decodeImuReport(report: ByteArray): FloatArray?
 
     external fun createXrealUsbSession(
-        connection: UsbDeviceConnection,
-        device: UsbDevice,
-        mcuInterface: UsbInterface?,
-        mcuIn: UsbEndpoint?,
-        mcuOut: UsbEndpoint?,
-        imuInterface: UsbInterface?,
-        imuIn: UsbEndpoint?,
-        imuOut: UsbEndpoint?,
+        fileDescriptor: Int,
+        vendorId: Int,
+        productId: Int,
+        mcuInterface: Int,
+        mcuIn: Int,
+        mcuOut: Int,
+        imuInterface: Int,
+        imuIn: Int,
+        imuOut: Int,
     ): Long
     external fun xrealMcuCommand(handle: Long, command: Int, payload: ByteArray): ByteArray
     external fun xrealImuCommand(handle: Long, command: Int, payload: ByteArray): ByteArray
     external fun xrealReadImu(handle: Long, timeoutMs: Int): ByteArray?
     external fun closeXrealUsbSession(handle: Long)
-
-    /** Native owns all XREAL sequencing; this is its single logged Android USB syscall. */
-    @JvmStatic
-    fun tracedTransfer(
-        connection: UsbDeviceConnection,
-        device: UsbDevice,
-        endpoint: UsbEndpoint,
-        buffer: ByteArray,
-        timeoutMs: Int,
-    ): Int = connection.tracedBulkTransfer(device, endpoint, buffer, buffer.size, timeoutMs)
+    external fun createUsbSession(fileDescriptor: Int, vendorId: Int, productId: Int): Long
+    external fun usbClaimInterface(handle: Long, interfaceId: Int): Boolean
+    external fun usbReleaseInterface(handle: Long, interfaceId: Int)
+    external fun usbEndpointTransfer(handle: Long, endpoint: Int, interrupt: Boolean, buffer: ByteArray, timeoutMs: Int): Int
+    external fun usbControlTransfer(
+        handle: Long, requestType: Int, request: Int, value: Int, index: Int,
+        buffer: ByteArray, timeoutMs: Int,
+    ): Int
+    external fun closeUsbSession(handle: Long)
+    external fun configureUsbDiagnostics(path: String)
 }
