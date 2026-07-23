@@ -38,11 +38,11 @@ abstract class UsbCheckActivity : Activity(), ArGlassesListener {
         if (sessionFeature == null) {
             status.text = "已识别：${glasses.model.displayName}"
             onReady(glasses, null)
-        } else if (manager.hasPermission(glasses.device)) {
+        } else if (manager.hasPermission(glasses)) {
             open(glasses)
         } else {
             status.text = "等待 ${glasses.model.displayName} USB 授权…"
-            manager.requestPermission(glasses.device)
+            manager.requestPermission(glasses)
         }
     }
 

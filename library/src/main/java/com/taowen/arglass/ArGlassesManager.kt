@@ -11,11 +11,16 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.view.Display
 import com.taowen.arglass.driver.DriverSession
+import com.taowen.arglass.driver.CompositeGlassesDriver
 import com.taowen.arglass.driver.GlassesDriverRegistry
 import java.io.Closeable
 import java.util.concurrent.Executor
 
-data class ConnectedGlasses(val device: UsbDevice, val model: GlassesModel)
+data class ConnectedGlasses(
+    val device: UsbDevice,
+    val model: GlassesModel,
+    val devices: List<UsbDevice> = listOf(device),
+)
 data class DisplayResolution(val displayId: Int, val name: String, val width: Int, val height: Int, val refreshRate: Float)
 enum class SessionFeature { IMU, DISPLAY_MODE, ALL }
 
@@ -35,6 +40,7 @@ class ArGlassesManager(
     private val appContext = context.applicationContext
     private val usbManager = appContext.getSystemService(UsbManager::class.java)
     private var pendingPermission: UsbDevice? = null
+    private var pendingGlasses: ConnectedGlasses? = null
     private var session: ArGlassesSession? = null
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -42,10 +48,16 @@ class ArGlassesManager(
                 ACTION_USB_PERMISSION -> {
                     val device = intent.usbDevice() ?: pendingPermission ?: return
                     pendingPermission = null
-                    val identified = ArGlassesCatalog.identify(device)?.let { ConnectedGlasses(device, it) } ?: return
                     val granted = usbManager.hasPermission(device)
                     ArGlassesDiagnostics.recordPermission(device, requested = false, granted = granted)
-                    dispatch { listener.onPermissionResult(identified, granted) }
+                    val glasses = pendingGlasses
+                    if (granted && glasses != null) {
+                        val next = glasses.devices.firstOrNull { !usbManager.hasPermission(it) }
+                        if (next != null) return requestPermissionDevice(next)
+                    }
+                    pendingGlasses = null
+                    val identified = glasses ?: ArGlassesCatalog.identify(device)?.let { ConnectedGlasses(device, it) } ?: return
+                    dispatch { listener.onPermissionResult(identified, granted && identified.devices.all(usbManager::hasPermission)) }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED, UsbManager.ACTION_USB_DEVICE_DETACHED -> scan()
             }
@@ -63,12 +75,28 @@ class ArGlassesManager(
     }
 
     fun scan(): List<ConnectedGlasses> = usbManager.deviceList.values.mapNotNull { device ->
-        ArGlassesCatalog.identify(device)?.let { ConnectedGlasses(device, it) }
+        ArGlassesCatalog.identify(device)?.let { model ->
+            val driver = GlassesDriverRegistry.driver(model)
+            val devices = listOf(device) + if (driver is CompositeGlassesDriver)
+                driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
+            ConnectedGlasses(device, model, devices.distinctBy(UsbDevice::getDeviceId))
+        }
     }.also { result -> dispatch { listener.onDevicesChanged(result) } }
 
     fun hasPermission(device: UsbDevice): Boolean = usbManager.hasPermission(device)
+    fun hasPermission(glasses: ConnectedGlasses): Boolean = glasses.devices.all(usbManager::hasPermission)
 
     fun requestPermission(device: UsbDevice) {
+        requestPermissionDevice(device)
+    }
+
+    fun requestPermission(glasses: ConnectedGlasses) {
+        pendingGlasses = glasses
+        glasses.devices.firstOrNull { !usbManager.hasPermission(it) }?.let(::requestPermissionDevice)
+            ?: dispatch { listener.onPermissionResult(glasses, true) }
+    }
+
+    private fun requestPermissionDevice(device: UsbDevice) {
         pendingPermission = device
         ArGlassesDiagnostics.recordPermission(device, requested = true, granted = usbManager.hasPermission(device))
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(appContext.packageName)
@@ -82,7 +110,13 @@ class ArGlassesManager(
         require(usbManager.hasPermission(device)) { "USB permission has not been granted" }
         val model = requireNotNull(ArGlassesCatalog.identify(device)) { "Unsupported AR glasses" }
         session?.close()
-        val driverSession = GlassesDriverRegistry.driver(model).open(usbManager, device, model, feature, executor, listener)
+        val driver = GlassesDriverRegistry.driver(model)
+        val devices = listOf(device) + if (driver is CompositeGlassesDriver)
+            driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
+        require(devices.all(usbManager::hasPermission)) { "USB permission has not been granted for every glasses component" }
+        val driverSession = if (driver is CompositeGlassesDriver)
+            driver.openComposite(usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, listener)
+        else driver.open(usbManager, device, model, feature, executor, listener)
         return ArGlassesSession(device, model, driverSession).also { session = it }
     }
 

@@ -18,6 +18,8 @@ import com.taowen.arglass.driver.xreal.xbxa01plus.XrealXbxA01PlusDriver
 import com.taowen.arglass.driver.xreal.ones.XrealOneSDriver
 import com.taowen.arglass.driver.xreal.one.XrealOneDriver
 import com.taowen.arglass.driver.xreal.onepro.XrealOneProDriver
+import com.taowen.arglass.driver.xreal.light.XrealLightDriver
+import com.taowen.arglass.driver.grawoow.g530.GrawoowG530Driver
 import java.io.Closeable
 import java.util.concurrent.Executor
 
@@ -27,6 +29,18 @@ internal interface GlassesDriver {
     fun open(
         usbManager: UsbManager,
         device: UsbDevice,
+        model: GlassesModel,
+        feature: SessionFeature,
+        executor: Executor,
+        listener: ArGlassesListener,
+    ): DriverSession
+}
+
+internal interface CompositeGlassesDriver : GlassesDriver {
+    fun companionDevices(allDevices: Collection<UsbDevice>, primary: UsbDevice): List<UsbDevice>
+    fun openComposite(
+        usbManager: UsbManager,
+        devices: List<UsbDevice>,
         model: GlassesModel,
         feature: SessionFeature,
         executor: Executor,
@@ -45,6 +59,8 @@ internal object GlassesDriverRegistry {
         XrealAir2Driver,
         XrealAir2ProDriver,
         XrealAir2UltraDriver,
+        XrealLightDriver,
+        GrawoowG530Driver,
         XrealXbxA01Driver,
         XrealXbxA01PlusDriver,
         XrealOneProDriver,

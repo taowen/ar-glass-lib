@@ -12,6 +12,8 @@ Supported models:
 - **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
 - **XREAL One S** (`3318:043E`, GS)
 - **XREAL One** (`3318:0438`, GF)
+- **XREAL Light** (`0486:573C` MCU + `05A9:0680` OV580)
+- **Grawoow G530 / MetaVision M53** (`1FF7:0FF4` MCU + `05A9:0F87` OV580)
 - **Rokid glasses** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, `2002`, and `2180`; product string supplies the market name)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
@@ -101,6 +103,12 @@ The public native surface provides XREAL MCU/IMU packet construction and version
 
 The native transport records every control, bulk, interrupt, and UVC transfer directly to `usb-transfers.bin`. Android-fd and direct-libusb camera paths use the same `ARUS` binary record format.
 
+Composite glasses are represented as one `ConnectedGlasses` entry with a primary
+controller and one or more companion USB devices. Permission requests are
+serialized across every component before the driver opens either fd. This is
+used by XREAL Light and Grawoow instead of exposing their MCU and OV580 as two
+unrelated glasses.
+
 ## VITURE Beast protocol notes
 
 - USB controller identities: VID `0x35CA`, PID `0x1201` or `0x1211`.
@@ -173,6 +181,26 @@ asynchronous-event skipping, and write the shared binary diagnostics stream.
 - The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
 - ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable`, XREAL `3318:0438`, an MJPEG UVC gadget, and the `uvc_bulk_15` composite mode. The open implementation therefore negotiates the descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions. It does not redistribute proprietary SDK binaries.
 - To enable the optional official backend locally, run `./scripts/import-xreal-official-camera.sh /path/to/ARLauncher.apk` before building. Imported files live under the gitignored `app/vendorJniLibs/`; normal builds remain independent of ARLauncher and show a precise unavailable error when those files are absent.
+
+## XREAL Light protocol notes
+
+- The MCU is `0486:573C`; the IMU/camera companion is OV580 `05A9:0680`.
+- MCU commands are 64-byte, Adler32-protected ASCII frames. Display values are
+  `1` 2D, `2` Half SBS, `3` Full SBS, and `4` 72 Hz Full SBS.
+- The driver sends the SDK-enable command before display control and maintains
+  the required 250 ms heartbeat while a display session is active.
+- OV580 IMU reports expose independently scaled gyro and accelerometer fields;
+  USB transfer and decoding were cross-checked against `ar-drivers-rs` and
+  `android-sensor-probe`.
+
+## Grawoow G530 / MetaVision M53 protocol notes
+
+- The MCU is `1FF7:0FF4`; the OV580 IMU companion is `05A9:0F87` with interrupt
+  endpoint `0x89`.
+- MCU commands use the `AA BB` control protocol: `0x8007` queries display mode
+  and `0x8008` switches between 2D and Full SBS.
+- IMU offsets, scale factors, axes, and USB identities are independently
+  present in `ar-drivers-rs` and `android-sensor-probe`.
 
 ## Rokid Air / Max protocol notes
 
