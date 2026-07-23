@@ -14,6 +14,10 @@ Supported models:
 - **XREAL One** (`3318:0438`, GF)
 - **XREAL Light** (`0486:573C` MCU + `05A9:0680` OV580)
 - **Grawoow G530 / MetaVision M53** (`1FF7:0FF4` MCU + `05A9:0F87` OV580)
+- **RayNeo Air 3S Pro** (`1BBB:AF50`, open HID IMU)
+- **VITURE Luma** (`35CA:1131`, open Gen2 RAW IMU)
+- **VITURE Luma Pro** (`35CA:1121` and `35CA:1141`, open Gen2 RAW IMU)
+- **VITURE Luma Cyber** (`35CA:1151`, open Gen2 RAW IMU)
 - **Rokid glasses** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, `2002`, and `2180`; product string supplies the market name)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
@@ -43,13 +47,14 @@ The standalone APK also has a **导出诊断日志** action. It exports two sepa
 
 Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
 
-When adding or correcting a glasses protocol, cross-check these open-source
-references:
+When adding or correcting a glasses protocol, use
+[`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
+as the source of truth. Its device selection, USB identities, display-mode
+mappings, IMU transport, initialization, axes, and units take precedence when
+the references disagree. Cross-check the other projects for Android adaptation
+and additional protocol evidence, but do not use them to override
+XRLinuxDriver behavior:
 
-- [`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
-  has broad model coverage and is the preferred starting point for USB
-  identities, display-mode mappings, initialization, and the interface library
-  selected for each device.
 - [`android-sensor-probe`](https://github.com/taowen/android-sensor-probe)
   provides Android USB Host, permission, JNI, and hardware-check examples, plus
   Android ports of several glasses protocols.
@@ -118,6 +123,30 @@ unrelated glasses.
 - The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
 - Beast's monocular camera is a separate `0C45:6368` USB device. The standalone check APK negotiates its 1920×1080@30 MJPEG stream on interface 1 / isochronous endpoint `0x81` when Android does not expose it through Camera2.
 - The native UVC fallback is adapted from `android-sensor-probe`, where this path was verified on Beast hardware. Its vendored LGPL-2.1-or-later libusb subset is built as a separate shared library and retains the upstream license/source files.
+
+## VITURE family support notes
+
+- XRLinuxDriver is authoritative for the supported PID list and model names.
+- Luma `1131`, Luma Pro `1121/1141`, and Luma Cyber `1151` expose the open
+  Gen2 `0301 [02 02]` RAW IMU stream with `7309` reports. They currently
+  advertise IMU and resolution checks only.
+- XRLinuxDriver performs their 2D/3D switching through VITURE's proprietary
+  `libglasses.so`. The Android SDK license prohibits unauthorized copying,
+  distribution, and use, so ar-glass-lib neither bundles it nor falsely exposes
+  that SDK-only display control.
+- One/Lite/Pro expose SDK pose callbacks but do not yet have a cross-verified
+  open raw-IMU implementation. Luma Ultra uses the proprietary Carina path.
+
+## RayNeo Air 3S Pro protocol notes
+
+- XRLinuxDriver identifies the device as `1BBB:AF50`; its full display and pose
+  implementation calls the proprietary `libRayNeoXRMiniSDK.so`.
+- The open backend sends HID command `66 01` and decodes the independently
+  captured `99 65` acceleration, angular velocity, magnetic field, temperature,
+  and timestamp report. It therefore advertises IMU and resolution only.
+- XRLinuxDriver ships the RayNeo SDK only for x86_64, so it cannot be used in
+  this Android ARM64 library. 2D/3D is intentionally not advertised until that
+  SDK behavior has an open protocol implementation.
 
 ## LUCI protocol notes
 

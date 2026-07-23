@@ -20,6 +20,8 @@ import com.taowen.arglass.driver.xreal.one.XrealOneDriver
 import com.taowen.arglass.driver.xreal.onepro.XrealOneProDriver
 import com.taowen.arglass.driver.xreal.light.XrealLightDriver
 import com.taowen.arglass.driver.grawoow.g530.GrawoowG530Driver
+import com.taowen.arglass.driver.rayneo.air3spro.RayneoAir3SProDriver
+import com.taowen.arglass.driver.viture.gen2.VitureGen2Driver
 import java.io.Closeable
 import java.util.concurrent.Executor
 
@@ -61,6 +63,8 @@ internal object GlassesDriverRegistry {
         XrealAir2UltraDriver,
         XrealLightDriver,
         GrawoowG530Driver,
+        RayneoAir3SProDriver,
+        VitureGen2Driver,
         XrealXbxA01Driver,
         XrealXbxA01PlusDriver,
         XrealOneProDriver,
