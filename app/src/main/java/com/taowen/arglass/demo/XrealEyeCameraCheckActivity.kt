@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
@@ -17,12 +16,11 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.taowen.arglass.XrealEyeOfficialCameraSession
 import com.taowen.arglass.XrealEyeOpenCameraSession
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Lets the user explicitly test the official-SO and open Eye camera implementations. */
+/** Lets the user explicitly test the open XREAL Eye camera implementation. */
 class XrealEyeCameraCheckActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var status: TextView
@@ -47,12 +45,8 @@ class XrealEyeCameraCheckActivity : Activity() {
         super.onCreate(savedInstanceState)
         content = checkContent()
         content.addView(label("XREAL Eye 摄像头", 25f, true))
-        status = label("请选择一套相互独立的读取实现。", 16f)
+        status = label("开源 libusb/UVC 读取，不依赖官方 SO。", 16f)
         content.addView(status, margins(top = 12, bottom = 12))
-        content.addView(Button(this).apply {
-            text = "官方 SO 读取"
-            setOnClickListener { startOfficial() }
-        }, margins(bottom = 8))
         content.addView(Button(this).apply {
             text = "开源 libusb/UVC 读取"
             setOnClickListener { requestOpen() }
@@ -65,42 +59,6 @@ class XrealEyeCameraCheckActivity : Activity() {
             IntentFilter(ACTION_USB_PERMISSION),
             if (Build.VERSION.SDK_INT >= 33) Context.RECEIVER_EXPORTED else 0,
         )
-    }
-
-    private fun startOfficial() {
-        stopCurrent()
-        status.text = "官方 SO 后端：正在初始化 XREAL Session…"
-        Thread({
-            runCatching { XrealEyeOfficialCameraSession(this) }
-                .onFailure { runOnUiThread { status.text = "官方 SO 后端不可用：${it.message}" } }
-                .onSuccess { official ->
-                    session = official
-                    running.set(true)
-                    runOnUiThread { status.text = "官方 SO 后端：RGB_888 实时帧" }
-                    readOfficial(official)
-                }
-        }, "xreal-eye-official-init").also { readerThread = it; it.start() }
-    }
-
-    private fun readOfficial(official: XrealEyeOfficialCameraSession) {
-        while (running.get()) {
-            val frame = official.readFrame()
-            if (frame == null) {
-                Thread.sleep(10)
-                continue
-            }
-            val bitmap = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
-            val pixels = IntArray(frame.width * frame.height)
-            var source = 0
-            for (index in pixels.indices) {
-                val r = frame.rgb888[source++].toInt() and 0xff
-                val g = frame.rgb888[source++].toInt() and 0xff
-                val b = frame.rgb888[source++].toInt() and 0xff
-                pixels[index] = (0xff shl 24) or (r shl 16) or (g shl 8) or b
-            }
-            bitmap.setPixels(pixels, 0, frame.width, 0, 0, frame.width, frame.height)
-            runOnUiThread { image.setImageBitmap(bitmap) }
-        }
     }
 
     private fun requestOpen() {

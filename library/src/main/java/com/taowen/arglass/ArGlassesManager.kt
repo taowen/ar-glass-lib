@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
 import android.os.Build
 import android.view.Display
 import com.taowen.arglass.driver.DriverSession
@@ -39,6 +40,7 @@ class ArGlassesManager(
     companion object { private const val ACTION_USB_PERMISSION = "com.taowen.arglass.USB_PERMISSION" }
     private val appContext = context.applicationContext
     private val usbManager = appContext.getSystemService(UsbManager::class.java)
+    private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
     private var pendingPermission: UsbDevice? = null
     private var pendingGlasses: ConnectedGlasses? = null
     private var session: ArGlassesSession? = null
@@ -115,8 +117,8 @@ class ArGlassesManager(
             driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
         require(devices.all(usbManager::hasPermission)) { "USB permission has not been granted for every glasses component" }
         val driverSession = if (driver is CompositeGlassesDriver)
-            driver.openComposite(usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, listener)
-        else driver.open(usbManager, device, model, feature, executor, listener)
+            driver.openComposite(connectivityManager, usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, listener)
+        else driver.open(connectivityManager, usbManager, device, model, feature, executor, listener)
         return ArGlassesSession(device, model, driverSession).also { session = it }
     }
 

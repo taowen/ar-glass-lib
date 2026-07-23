@@ -2,6 +2,7 @@ package com.taowen.arglass.driver
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesModel
@@ -36,6 +37,16 @@ internal interface GlassesDriver {
         executor: Executor,
         listener: ArGlassesListener,
     ): DriverSession
+
+    fun open(
+        connectivityManager: ConnectivityManager?,
+        usbManager: UsbManager,
+        device: UsbDevice,
+        model: GlassesModel,
+        feature: SessionFeature,
+        executor: Executor,
+        listener: ArGlassesListener,
+    ): DriverSession = open(usbManager, device, model, feature, executor, listener)
 }
 
 internal interface CompositeGlassesDriver : GlassesDriver {
@@ -48,6 +59,16 @@ internal interface CompositeGlassesDriver : GlassesDriver {
         executor: Executor,
         listener: ArGlassesListener,
     ): DriverSession
+
+    fun openComposite(
+        connectivityManager: ConnectivityManager?,
+        usbManager: UsbManager,
+        devices: List<UsbDevice>,
+        model: GlassesModel,
+        feature: SessionFeature,
+        executor: Executor,
+        listener: ArGlassesListener,
+    ): DriverSession = openComposite(usbManager, devices, model, feature, executor, listener)
 }
 
 internal interface DriverSession : Closeable {

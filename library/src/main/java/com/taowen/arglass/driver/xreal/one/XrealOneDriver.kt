@@ -2,6 +2,7 @@ package com.taowen.arglass.driver.xreal.one
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
@@ -21,7 +22,7 @@ internal object XrealOneDriver : GlassesDriver {
         GlassesModel(
             id, "XREAL", "One", VID, PID,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION, GlassesCapability.CAMERA),
-            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D), id,
+            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D), id,
         )
     } else null
 
@@ -32,5 +33,15 @@ internal object XrealOneDriver : GlassesDriver {
         feature: SessionFeature,
         executor: Executor,
         listener: ArGlassesListener,
-    ): DriverSession = XrealOneFamilySession(usbManager, device, model, feature, executor, listener)
+    ): DriverSession = XrealOneFamilySession(null, usbManager, device, model, feature, executor, listener)
+
+    override fun open(
+        connectivityManager: ConnectivityManager?,
+        usbManager: UsbManager,
+        device: UsbDevice,
+        model: GlassesModel,
+        feature: SessionFeature,
+        executor: Executor,
+        listener: ArGlassesListener,
+    ): DriverSession = XrealOneFamilySession(connectivityManager, usbManager, device, model, feature, executor, listener)
 }

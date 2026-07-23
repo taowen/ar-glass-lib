@@ -18,8 +18,7 @@ struct ImuSample {
 };
 
 std::vector<std::uint8_t> make_imu_command(std::uint8_t command, std::span<const std::uint8_t> payload = {});
-std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::uint32_t request_id,
-                                           std::span<const std::uint8_t> payload = {});
+std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::span<const std::uint8_t> payload = {});
 bool decode_xreal_imu(std::span<const std::uint8_t> report, ImuSample& result);
 
 }  // namespace ar_glass

@@ -21,7 +21,9 @@ class DisplayModeCheckActivity : UsbCheckActivity() {
                 Thread({
                     val mode = control.queryDisplayMode()
                     runOnUiThread {
-                        if (glasses.model.id != "viture_beast" || mode == null) {
+                        if (mode != null) {
+                            status.text = "当前显示模式：${mode.name}"
+                        } else if (glasses.model.id != "viture_beast" && !status.text.toString().contains("失败")) {
                             status.text = "当前显示模式：${mode?.name ?: "读取失败"}"
                         }
                         isEnabled = true
@@ -53,7 +55,12 @@ class DisplayModeCheckActivity : UsbCheckActivity() {
                     val changed = control.setDisplayMode(mode)
                     runOnUiThread {
                         status.text = if (changed) {
-                            if (mode == DisplayMode.MIRROR_2D) "3D 已关闭，当前为 2D" else "3D 已开启（${modeLabel(mode)}）"
+                            val message = if (mode == DisplayMode.MIRROR_2D) {
+                                "3D 已关闭，当前为 2D"
+                            } else {
+                                "3D 已开启（${modeLabel(mode)}）"
+                            }
+                            message + xrealOneProjectionHint()
                         } else {
                             "模式切换失败"
                         }
@@ -70,4 +77,11 @@ class DisplayModeCheckActivity : UsbCheckActivity() {
         DisplayMode.FULL_SBS_3D -> "Full SBS"
         DisplayMode.HIGH_REFRESH_SBS_3D -> "高刷 SBS"
     }
+
+    private fun xrealOneProjectionHint(): String =
+        if (session?.model?.id?.startsWith("xreal_one") == true) {
+            "\n如出现系统“是否开始投屏”确认，请手工点开始；分辨率会在确认后更新。"
+        } else {
+            ""
+        }
 }

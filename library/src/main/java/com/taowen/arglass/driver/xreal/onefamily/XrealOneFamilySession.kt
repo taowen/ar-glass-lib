@@ -2,23 +2,25 @@ package com.taowen.arglass.driver.xreal.onefamily
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.util.Log
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
+import com.taowen.arglass.NativeBridge
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
-import com.taowen.arglass.driver.xreal.XrealNativeUsbSession
-import java.net.InetSocketAddress
-import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.sqrt
 
-/** GF/Gina/GS split transport: MCU over USB HID, IMU over USB Ethernet TCP. */
+/** GF/Gina/GS split transport. XRLinuxDriver currently exposes only the open TCP IMU path. */
 internal class XrealOneFamilySession(
+    private val connectivityManager: ConnectivityManager?,
     usbManager: UsbManager,
     private val device: UsbDevice,
     private val model: GlassesModel,
@@ -27,104 +29,142 @@ internal class XrealOneFamilySession(
     private val listener: ArGlassesListener,
 ) : DriverSession {
     private val running = AtomicBoolean(true)
-    private val displayEnabled = feature == SessionFeature.DISPLAY_MODE || feature == SessionFeature.ALL
+    private val displayEnabled = (feature == SessionFeature.DISPLAY_MODE || feature == SessionFeature.ALL) &&
+        GlassesCapability.DISPLAY_MODE in model.capabilities
     private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
-    private val usb = if (displayEnabled) XrealNativeUsbSession(usbManager, device, useMcu = true, useImu = false) else null
-    @Volatile private var socket: Socket? = null
     private val imuThread = if (imuEnabled) Thread(::readEthernetImu, "xreal-one-s-tcp-imu") else null
 
     init { imuThread?.start() }
 
     override fun queryDisplayMode(): DisplayMode? {
-        check(displayEnabled) { "This session was not opened for display-mode control" }
-        return queryRawDisplayMode()?.let(XrealOneFamilyDisplayModeProtocol::decode)
+        if (!displayEnabled) {
+            status("${model.displayName} 未声明 2D/3D 切换能力")
+            return null
+        }
+        return readDpEdid()?.let { edid ->
+            XrealOneFamilyDisplayModeProtocol.decode(edid).also { mode ->
+                status("${model.displayName} DP EDID=$edid，显示模式=${mode?.name ?: "未知"}")
+            }
+        }
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
-        check(displayEnabled) { "This session was not opened for display-mode control" }
-        val currentMode = queryRawDisplayMode() ?: return false
-        val oneSeriesMode = XrealOneFamilyDisplayModeProtocol.encode(mode, currentMode)
-        if (oneSeriesMode == currentMode) return true
-        val response = requireNotNull(usb).mcu(0x08, byteArrayOf(oneSeriesMode.toByte()))
-        return response.size >= 23 && (response[22].toInt() and 0xff) == 0
-    }
-
-    private fun queryRawDisplayMode(): Int? {
-        val response = requireNotNull(usb).mcu(0x07)
-        return response.getOrNull(23)?.toInt()?.and(0xff)
+        if (!displayEnabled) {
+            status("${model.displayName} 未声明 2D/3D 切换能力")
+            return false
+        }
+        val command = XrealOneFamilyDisplayModeProtocol.encode(mode)
+        if (command == null) {
+            status("${model.displayName} 未开放 ${mode.name} 切换；仅真机验证 2D 与 Full SBS 3D")
+            return false
+        }
+        val transportOk = runCatching {
+            withXrealNcmNetwork {
+                NativeBridge.xrealOneDpSetDisplayMode(DP_HOST, DP_PORT, command.edid, command.inputMode, 2_000, 1_200)
+            }
+        }.onFailure { error ->
+            status("${model.displayName} DP ACK 未完成，继续读回 EDID 验证：${error.message}")
+        }.getOrDefault(false)
+        val verified = transportOk || verifyDpEdid(command.edid)
+        if (verified) {
+            status("${model.displayName} 已切换 DP 模式：${mode.name}，EDID=${command.edid}, input=${command.inputMode}")
+        } else {
+            status("${model.displayName} DP 模式切换未验证成功：${mode.name}")
+        }
+        return verified
     }
 
     private fun readEthernetImu() {
-        val tcp = Socket()
-        socket = tcp
+        var handle = 0L
         try {
             status("正在连接 ${model.displayName} USB Ethernet IMU")
-            tcp.connect(InetSocketAddress(IMU_HOST, IMU_PORT), 2_000)
-            tcp.soTimeout = 3_000
+            handle = withXrealNcmNetwork {
+                NativeBridge.createXrealOneTcpImuSession(IMU_HOST, IMU_PORT, 2_000, 500)
+            }
             status("${model.displayName} IMU 已连接 $IMU_HOST:$IMU_PORT")
-            val input = tcp.getInputStream()
-            val pending = ArrayList<Byte>()
-            val chunk = ByteArray(4_096)
             while (running.get()) {
-                val count = input.read(chunk)
-                if (count < 0) break
-                repeat(count) { pending += chunk[it] }
-                while (true) {
-                    val start = findHeader(pending)
-                    if (start < 0) {
-                        if (pending.size > HEADER.size) pending.subList(0, pending.size - HEADER.size).clear()
-                        break
-                    }
-                    if (start > 0) pending.subList(0, start).clear()
-                    if (pending.size < FRAME_SIZE) break
-                    val frame = ByteArray(FRAME_SIZE) { pending[it] }
-                    pending.subList(0, FRAME_SIZE).clear()
-                    decodeImu(frame)?.let { sample -> executor.execute { listener.onImuSample(sample) } }
-                }
+                NativeBridge.xrealOneReadImu(handle)?.let(::decodeNativeImu)
+                    ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Exception) {
             if (running.get()) status("${model.displayName} Ethernet IMU 不可达：${error.message}")
         } finally {
-            runCatching { tcp.close() }
+            if (handle != 0L) NativeBridge.closeXrealOneTcpImuSession(handle)
         }
     }
 
-    private fun findHeader(bytes: List<Byte>): Int = (0..bytes.size - HEADER.size)
-        .firstOrNull { offset -> HEADER.indices.all { bytes[offset + it] == HEADER[it] } } ?: -1
-
-    private fun decodeImu(frame: ByteArray): ImuSample? {
-        if ((0..frame.size - MARKER.size).none { offset -> MARKER.indices.all { frame[offset + it] == MARKER[it] } }) return null
-        val buffer = ByteBuffer.wrap(frame).order(ByteOrder.LITTLE_ENDIAN)
-        val gx = buffer.getFloat(34); val gy = buffer.getFloat(38); val gz = buffer.getFloat(42)
-        val ax = buffer.getFloat(46); val ay = buffer.getFloat(50); val az = buffer.getFloat(54)
-        if (listOf(gx, gy, gz, ax, ay, az).any { !it.isFinite() } || sqrt(ax * ax + ay * ay + az * az) !in 5f..15f) return null
+    private fun decodeNativeImu(sample: ByteArray): ImuSample? {
+        if (sample.size < NATIVE_IMU_SAMPLE_SIZE) return null
+        val buffer = ByteBuffer.wrap(sample).order(ByteOrder.LITTLE_ENDIAN)
         return ImuSample(
-            // The wire value is nanoseconds. xreal_one_driver divides it to
-            // microseconds internally, then XRLinuxDriver converts it back to
-            // nanoseconds before exposing an IMU sample.
-            buffer.getLong(14),
-            floatArrayOf(-ax, -az, -ay),
-            floatArrayOf(-gx, -gz, -gy),
+            buffer.getLong(0),
+            floatArrayOf(buffer.getFloat(8), buffer.getFloat(12), buffer.getFloat(16)),
+            floatArrayOf(buffer.getFloat(20), buffer.getFloat(24), buffer.getFloat(28)),
             null,
             Float.NaN,
-            1,
+            buffer.getInt(32),
         )
     }
 
-    private fun status(message: String) = executor.execute { listener.onStatus(message) }
+    private fun readDpEdid(): Int? = runCatching {
+        withXrealNcmNetwork {
+            NativeBridge.xrealOneDpGetCurrentEdid(DP_HOST, DP_PORT, 2_000, 800)
+        }
+    }.onFailure { error ->
+        status("${model.displayName} DP 模式读取失败：${error.message}")
+    }.getOrNull()
+
+    private fun verifyDpEdid(expected: Int): Boolean {
+        repeat(6) { attempt ->
+            val edid = readDpEdid()
+            if (edid == expected) return true
+            if (attempt < 5) Thread.sleep(250)
+        }
+        return false
+    }
+
+    private inline fun <T> withXrealNcmNetwork(block: () -> T): T {
+        val manager = connectivityManager ?: return block()
+        val network = findXrealNcmNetwork(manager)
+        if (network == null) {
+            status("${model.displayName} 未找到 $DP_LOCAL_HOST 所在的 Android Network，使用默认路由尝试连接")
+            return block()
+        }
+        val previous = manager.boundNetworkForProcess
+        if (!manager.bindProcessToNetwork(network)) {
+            status("${model.displayName} 绑定 USB Ethernet Network 失败，使用默认路由尝试连接")
+            return block()
+        }
+        return try {
+            block()
+        } finally {
+            manager.bindProcessToNetwork(previous)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun findXrealNcmNetwork(manager: ConnectivityManager): Network? = manager.allNetworks.firstOrNull { network ->
+        val properties = manager.getLinkProperties(network) ?: return@firstOrNull false
+        properties.linkAddresses.any { address -> address.address.hostAddress == DP_LOCAL_HOST }
+    }
+
+    private fun status(message: String) {
+        Log.i(TAG, message)
+        executor.execute { listener.onStatus(message) }
+    }
 
     override fun close() {
         if (!running.compareAndSet(true, false)) return
-        runCatching { socket?.close() }
         imuThread?.interrupt(); if (Thread.currentThread() !== imuThread) imuThread?.join(1_200)
-        usb?.close()
     }
 
     private companion object {
+        const val TAG = "ArGlassXrealOne"
+        const val DP_HOST = "169.254.2.1"
+        const val DP_LOCAL_HOST = "169.254.2.10"
+        const val DP_PORT = 52_999
         const val IMU_HOST = "169.254.2.1"
         const val IMU_PORT = 52_998
-        const val FRAME_SIZE = 84
-        val HEADER = byteArrayOf(0x28, 0x36, 0, 0, 0, 0x80.toByte())
-        val MARKER = byteArrayOf(0, 0x40, 0x1f, 0, 0, 0x40)
+        const val NATIVE_IMU_SAMPLE_SIZE = 36
     }
 }

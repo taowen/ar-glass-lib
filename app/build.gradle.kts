@@ -16,7 +16,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    sourceSets.getByName("main").jniLibs.srcDir("vendorJniLibs")
 }
 
 dependencies { implementation(project(":library")) }

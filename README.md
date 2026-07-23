@@ -36,7 +36,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
 - `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
-- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and exposes two explicit, independent backends: **官方 SO 读取** uses ARLauncher's XREAL/NR runtime and `StartRGBCameraDataCapture`; **开源 libusb/UVC 读取** negotiates and reads MJPEG without any vendor SO. The open backend requests USB permission only after a matching XREAL One VideoStreaming interface is present.
+- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and uses the open libusb/UVC backend to negotiate and read MJPEG without any vendor SO. It requests USB permission only after a matching XREAL One VideoStreaming interface is present.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
@@ -192,24 +192,29 @@ hardware-validated implementation and `ar-drivers-rs`.
   as four-byte little-endian integers, matching the official `int EGlassMode` ABI.
 
 All XREAL USB interfaces and transfers are owned by `XrealNativeUsbSession` in
-JNI/libusb. Kotlin retains Android device enumeration/permission and the
-One-family USB-Ethernet TCP reader, but does not claim interfaces or issue USB
-transfers. Native transactions perform framing, request-ID matching, bounded
+JNI/libusb. Kotlin retains Android device enumeration/permission only; XREAL
+One-family USB-Ethernet TCP DP control and IMU connect/read/frame decode are also owned by JNI.
+Native transactions perform framing, request-ID matching, bounded
 asynchronous-event skipping, and write the shared binary diagnostics stream.
 
 ## XREAL One family protocol notes
 
 - Runtime USB identities: One Pro `3318:0436` (Gina, official type 41), One `3318:0438` (GF, official type 47), and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
-- Display query/switch uses XREAL MCU interface 0 with FD commands `0x07` / `0x08` and a one-byte mode payload.
-- Switching preserves the current refresh-rate family: `1` <-> `3` for 60 Hz,
-  `5` <-> `4` for 72 Hz, and `10` <-> `9` for 90 Hz. Mono 120 Hz (`11`)
-  maps to the highest available SBS mode, 90 Hz (`9`); the MCU table has no
-  120 Hz SBS mode. Value `8` is the separate 1920x1080@60 SBS mode.
+- One-family 2D/3D switching is not the old XREAL USB MCU path. Control My
+  Glasses 1.1.0 uses the USB-Ethernet DP RPC service at `169.254.2.1:52999`.
+  Verified packets are `0x275e` get current EDID, `0x275f` set current EDID,
+  and `0x2822` set DP input mode. `EDID=5 + inputMode=1` switches XREAL One to
+  `3840x1080@60` Full SBS 3D; `EDID=9 + inputMode=0` restores
+  `1920x1080@90` 2D.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
-- The stream is reassembled into 84-byte frames and exposes acceleration, angular velocity, and the device timestamp in Android-oriented coordinates.
-- The USB Ethernet frame implementation follows `android-sensor-probe`'s `XrealOneTcpReader`; it needs final verification on One S firmware because that reader was originally validated on the earlier One family.
-- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable`, XREAL `3318:0438`, an MJPEG UVC gadget, and the `uvc_bulk_15` composite mode. The open implementation therefore negotiates the descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions. It does not redistribute proprietary SDK binaries.
-- To enable the optional official backend locally, run `./scripts/import-xreal-official-camera.sh /path/to/ARLauncher.apk` before building. Imported files live under the gitignored `app/vendorJniLibs/`; normal builds remain independent of ARLauncher and show a precise unavailable error when those files are absent.
+- The JNI TCP reader follows XRLinuxDriver's vendored `xreal_one_driver`: find
+  header `28 36 00 00 00 80`, require marker `00 40 1F 00 00 40`, reassemble
+  84-byte frames, and expose acceleration, angular velocity, and the device
+  timestamp in Android-oriented coordinates.
+- XRLinuxDriver notes that One/One Pro/1S require latest firmware and glasses
+  stabilizer/anchor features disabled. Those prerequisites apply to the IMU
+  path; they do not by themselves define an open 2D/3D switching protocol.
+- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable`, XREAL `3318:0438`, an MJPEG UVC gadget, and the `uvc_bulk_15` composite mode. The implementation does not link or load ARLauncher SO files; it negotiates the UVC descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions.
 
 ## XREAL Light protocol notes
 

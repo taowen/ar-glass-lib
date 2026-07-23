@@ -2,44 +2,24 @@ package com.taowen.arglass.driver.xreal.onefamily
 
 import com.taowen.arglass.DisplayMode
 
-/** XREAL MCU display-mode values and the refresh-preserving SBS mapping. */
+/** XREAL One-family DP RPC EDID values captured from Control My Glasses 1.1.0 on real hardware. */
 internal object XrealOneFamilyDisplayModeProtocol {
-    private const val MODE_2D_60HZ = 1
-    private const val MODE_3D_60HZ = 3
-    private const val MODE_3D_72HZ = 4
-    private const val MODE_2D_72HZ = 5
-    private const val MODE_3D_1920_60HZ = 8
-    private const val MODE_3D_90HZ = 9
-    private const val MODE_2D_90HZ = 10
-    private const val MODE_2D_120HZ = 11
+    private const val EDID_3D_3840_1080_60HZ = 5
+    private const val EDID_3D_3840_1080_72HZ = 6
+    private const val EDID_3D_3840_1080_90HZ = 7
+    private const val EDID_2D_1920_1080_90HZ = 9
 
-    fun decode(value: Int): DisplayMode? = when (value) {
-        MODE_2D_60HZ, MODE_2D_72HZ, MODE_2D_90HZ, MODE_2D_120HZ -> DisplayMode.MIRROR_2D
-        MODE_3D_60HZ, MODE_3D_72HZ, MODE_3D_90HZ -> DisplayMode.FULL_SBS_3D
-        MODE_3D_1920_60HZ -> DisplayMode.HALF_SBS_3D
+    data class Command(val edid: Int, val inputMode: Int)
+
+    fun decode(edid: Int): DisplayMode? = when (edid) {
+        EDID_2D_1920_1080_90HZ -> DisplayMode.MIRROR_2D
+        EDID_3D_3840_1080_60HZ, EDID_3D_3840_1080_72HZ, EDID_3D_3840_1080_90HZ -> DisplayMode.FULL_SBS_3D
         else -> null
     }
 
-    fun encode(mode: DisplayMode, currentValue: Int): Int = when (mode) {
-        DisplayMode.MIRROR_2D -> when (currentValue) {
-            MODE_3D_60HZ, MODE_3D_1920_60HZ -> MODE_2D_60HZ
-            MODE_3D_72HZ -> MODE_2D_72HZ
-            MODE_3D_90HZ -> MODE_2D_90HZ
-            else -> currentValue.takeIf(::is2d) ?: MODE_2D_60HZ
-        }
-        DisplayMode.FULL_SBS_3D -> when (currentValue) {
-            MODE_2D_60HZ -> MODE_3D_60HZ
-            MODE_2D_72HZ -> MODE_3D_72HZ
-            MODE_2D_90HZ, MODE_2D_120HZ -> MODE_3D_90HZ
-            else -> currentValue.takeIf(::isFullSbs) ?: MODE_3D_60HZ
-        }
-        DisplayMode.HIGH_REFRESH_SBS_3D -> MODE_3D_90HZ
-        DisplayMode.HALF_SBS_3D -> MODE_3D_1920_60HZ
+    fun encode(mode: DisplayMode): Command? = when (mode) {
+        DisplayMode.MIRROR_2D -> Command(EDID_2D_1920_1080_90HZ, inputMode = 0)
+        DisplayMode.FULL_SBS_3D -> Command(EDID_3D_3840_1080_60HZ, inputMode = 1)
+        DisplayMode.HALF_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D -> null
     }
-
-    private fun is2d(value: Int) = value == MODE_2D_60HZ || value == MODE_2D_72HZ ||
-        value == MODE_2D_90HZ || value == MODE_2D_120HZ
-
-    private fun isFullSbs(value: Int) = value == MODE_3D_60HZ || value == MODE_3D_72HZ ||
-        value == MODE_3D_90HZ
 }

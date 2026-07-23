@@ -31,8 +31,10 @@ public:
                     int imu_interface, int imu_in, int imu_out)
         : vid_(vid), pid_(pid), mcu_interface_(mcu_interface), mcu_in_(mcu_in), mcu_out_(mcu_out),
           imu_interface_(imu_interface), imu_in_(imu_in), imu_out_(imu_out) {
+        libusb_set_option(nullptr, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, nullptr);
         if (libusb_init(&context_) != 0 || libusb_wrap_sys_device(context_, fd, &handle_) != 0)
             throw std::runtime_error("Cannot wrap XREAL USB file descriptor");
+        libusb_set_auto_detach_kernel_driver(handle_, 1);
         if (mcu_interface_ >= 0 && libusb_claim_interface(handle_, mcu_interface_) != 0)
             throw std::runtime_error("Cannot claim XREAL MCU interface");
         if (imu_interface_ >= 0 && libusb_claim_interface(handle_, imu_interface_) != 0)
@@ -41,12 +43,11 @@ public:
 
     std::vector<std::uint8_t> mcu(JNIEnv*, std::uint16_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
-        const auto id = request_id_++;
-        return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, id, payload), 0xfd, command, id);
+        return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, payload), 0xfd, command);
     }
     std::vector<std::uint8_t> imu(JNIEnv*, std::uint8_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
-        return transact(imu_out_, imu_in_, ar_glass::make_imu_command(command, payload), 0xaa, command, -1);
+        return transact(imu_out_, imu_in_, ar_glass::make_imu_command(command, payload), 0xaa, command);
     }
     std::vector<std::uint8_t> read_imu(JNIEnv*, int timeout) {
         return read(imu_in_, 64, timeout);
@@ -85,20 +86,21 @@ private:
         return result;
     }
     std::vector<std::uint8_t> transact(int out, int in,
-            const std::vector<std::uint8_t>& request, int magic, int command, std::int64_t id) {
+            const std::vector<std::uint8_t>& request, int magic, int command) {
         if (!out || !in || !running_) return {};
         const int written = transfer(out, const_cast<std::uint8_t*>(request.data()), request.size(), 750);
         if (written != static_cast<int>(request.size())) return {};
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (running_ && std::chrono::steady_clock::now() < deadline) {
-            auto response = read(in, 64, 500);
+            // XREAL One advertises a 1024-byte interrupt packet even though
+            // the FD-framed MCU message at its start is usually only 23-27
+            // bytes. A 64-byte libusb buffer reports OVERFLOW and discards the
+            // otherwise valid response.
+            auto response = read(in, 1024, 500);
             if (response.size() < 8 || response[0] != magic) continue;
             const int response_command = magic == 0xfd && response.size() >= 17
                 ? response[15] | response[16] << 8 : response[7];
-            std::uint32_t response_id = 0;
-            if (magic == 0xfd && response.size() >= 11)
-                std::memcpy(&response_id, response.data() + 7, sizeof(response_id));
-            if (response_command == command && (id < 0 || response_id == static_cast<std::uint32_t>(id))) return response;
+            if (response_command == command) return response;
         }
         return {};
     }
@@ -109,7 +111,6 @@ private:
     int mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
     std::mutex command_mutex_;
     std::atomic_bool running_{true};
-    std::uint32_t request_id_{1};
 };
 
 XrealUsbSession* session(jlong handle) { return reinterpret_cast<XrealUsbSession*>(handle); }
@@ -117,8 +118,10 @@ XrealUsbSession* session(jlong handle) { return reinterpret_cast<XrealUsbSession
 class UsbSession {
 public:
     UsbSession(int fd, int vid, int pid) : vid_(vid), pid_(pid) {
+        libusb_set_option(nullptr, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, nullptr);
         if (libusb_init(&context_) != 0 || libusb_wrap_sys_device(context_, fd, &handle_) != 0)
             throw std::runtime_error("Cannot wrap USB file descriptor");
+        libusb_set_auto_detach_kernel_driver(handle_, 1);
     }
     ~UsbSession() {
         if (handle_) libusb_close(handle_);
@@ -161,7 +164,8 @@ Java_com_taowen_arglass_NativeBridge_makeImuCommand(JNIEnv* env, jobject, jint c
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_taowen_arglass_NativeBridge_makeMcuCommand(JNIEnv* env, jobject, jint command, jint request_id, jbyteArray payload) {
     const auto bytes = to_vector(env, payload);
-    return to_array(env, ar_glass::make_mcu_command(static_cast<std::uint16_t>(command), static_cast<std::uint32_t>(request_id), bytes));
+    (void) request_id;
+    return to_array(env, ar_glass::make_mcu_command(static_cast<std::uint16_t>(command), bytes));
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
