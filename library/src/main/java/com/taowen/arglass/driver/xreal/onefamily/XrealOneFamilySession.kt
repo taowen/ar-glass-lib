@@ -3,7 +3,6 @@ package com.taowen.arglass.driver.xreal.onefamily
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
-import android.net.Network
 import android.util.Log
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
@@ -73,8 +72,15 @@ internal class XrealOneFamilySession(
             return false
         }
         val transportOk = runCatching {
-            withXrealNcmNetwork {
-                NativeBridge.xrealOneDpSetDisplayMode(DP_HOST, DP_PORT, command.edid, command.inputMode, 2_000, 1_200)
+            XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
+                NativeBridge.xrealOneDpSetDisplayMode(
+                    XrealOneNcmTransport.GLASSES_HOST,
+                    XrealOneNcmTransport.CONTROL_PORT,
+                    command.edid,
+                    command.inputMode,
+                    2_000,
+                    1_200,
+                )
             }
         }.onFailure { error ->
             status("${model.displayName} DP ACK 未完成，继续读回 EDID 验证：${error.message}")
@@ -99,8 +105,15 @@ internal class XrealOneFamilySession(
             return false
         }
         val transportOk = runCatching {
-            withXrealNcmNetwork {
-                NativeBridge.xrealOneDpSetDisplayMode(DP_HOST, DP_PORT, command.edid, command.inputMode, 2_000, 1_200)
+            XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
+                NativeBridge.xrealOneDpSetDisplayMode(
+                    XrealOneNcmTransport.GLASSES_HOST,
+                    XrealOneNcmTransport.CONTROL_PORT,
+                    command.edid,
+                    command.inputMode,
+                    2_000,
+                    1_200,
+                )
             }
         }.onFailure { error ->
             status("${model.displayName} DP ACK 未完成，继续读回 EDID 验证：${error.message}")
@@ -121,10 +134,15 @@ internal class XrealOneFamilySession(
         var handle = 0L
         try {
             status("正在连接 ${model.displayName} USB Ethernet IMU")
-            handle = withXrealNcmNetwork {
-                NativeBridge.createXrealOneTcpImuSession(IMU_HOST, IMU_PORT, 2_000, 500)
+            handle = XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
+                NativeBridge.createXrealOneTcpImuSession(
+                    XrealOneNcmTransport.GLASSES_HOST,
+                    XrealOneNcmTransport.IMU_PORT,
+                    2_000,
+                    500,
+                )
             }
-            status("${model.displayName} IMU 已连接 $IMU_HOST:$IMU_PORT")
+            status("${model.displayName} IMU 已连接 ${XrealOneNcmTransport.GLASSES_HOST}:${XrealOneNcmTransport.IMU_PORT}")
             while (running.get()) {
                 NativeBridge.xrealOneReadImu(handle)?.let(::decodeNativeImu)
                     ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
@@ -150,8 +168,13 @@ internal class XrealOneFamilySession(
     }
 
     private fun readDpEdid(): Int? = runCatching {
-        withXrealNcmNetwork {
-            NativeBridge.xrealOneDpGetCurrentEdid(DP_HOST, DP_PORT, 2_000, 800)
+        XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
+            NativeBridge.xrealOneDpGetCurrentEdid(
+                XrealOneNcmTransport.GLASSES_HOST,
+                XrealOneNcmTransport.CONTROL_PORT,
+                2_000,
+                800,
+            )
         }
     }.onFailure { error ->
         status("${model.displayName} DP 模式读取失败：${error.message}")
@@ -166,31 +189,6 @@ internal class XrealOneFamilySession(
         return false
     }
 
-    private inline fun <T> withXrealNcmNetwork(block: () -> T): T {
-        val manager = connectivityManager ?: return block()
-        val network = findXrealNcmNetwork(manager)
-        if (network == null) {
-            status("${model.displayName} 未找到 $DP_LOCAL_HOST 所在的 Android Network，使用默认路由尝试连接")
-            return block()
-        }
-        val previous = manager.boundNetworkForProcess
-        if (!manager.bindProcessToNetwork(network)) {
-            status("${model.displayName} 绑定 USB Ethernet Network 失败，使用默认路由尝试连接")
-            return block()
-        }
-        return try {
-            block()
-        } finally {
-            manager.bindProcessToNetwork(previous)
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun findXrealNcmNetwork(manager: ConnectivityManager): Network? = manager.allNetworks.firstOrNull { network ->
-        val properties = manager.getLinkProperties(network) ?: return@firstOrNull false
-        properties.linkAddresses.any { address -> address.address.hostAddress == DP_LOCAL_HOST }
-    }
-
     private fun status(message: String) {
         Log.i(TAG, message)
         executor.execute { listener.onStatus(message) }
@@ -203,11 +201,6 @@ internal class XrealOneFamilySession(
 
     private companion object {
         const val TAG = "ArGlassXrealOne"
-        const val DP_HOST = "169.254.2.1"
-        const val DP_LOCAL_HOST = "169.254.2.10"
-        const val DP_PORT = 52_999
-        const val IMU_HOST = "169.254.2.1"
-        const val IMU_PORT = 52_998
         const val NATIVE_IMU_SAMPLE_SIZE = 36
     }
 }

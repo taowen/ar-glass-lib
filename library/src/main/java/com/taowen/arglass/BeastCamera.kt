@@ -15,15 +15,16 @@ object BeastCameraCatalog {
 open class UvcCameraSession(
     usbManager: UsbManager,
     val device: UsbDevice,
+    private val label: String = "UVC camera",
 ) : Closeable {
-    private val connection = requireNotNull(usbManager.openDevice(device)) { "Cannot open VITURE Beast camera" }
+    private val connection = requireNotNull(usbManager.openDevice(device)) { "Cannot open $label" }
     private val handle = UvcCameraNative.start(connection.fileDescriptor).also {
         if (it == 0L) connection.close()
     }
     private val closed = AtomicBoolean(false)
 
     init {
-        check(handle != 0L) { "UVC 1920x1080 MJPEG negotiation failed" }
+        check(handle != 0L) { "$label UVC MJPEG negotiation failed" }
     }
 
     fun readJpegFrame(): ByteArray? {
@@ -38,7 +39,8 @@ open class UvcCameraSession(
     }
 }
 
-class BeastCameraSession(usbManager: UsbManager, device: UsbDevice) : UvcCameraSession(usbManager, device) {
+class BeastCameraSession(usbManager: UsbManager, device: UsbDevice) :
+    UvcCameraSession(usbManager, device, "VITURE Beast camera") {
     init { require(BeastCameraCatalog.identify(device)) { "Not a VITURE Beast camera" } }
 }
 

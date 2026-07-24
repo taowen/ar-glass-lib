@@ -37,7 +37,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `DisplayProfileSwitchActivity`: lists every verified glasses-native display profile declared by the current driver, shows `width × height @ refresh-rate` plus the 2D/3D layout, and switches by asking the driver to translate that common profile into its own protocol value.
 - `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
-- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and uses the open libusb/UVC backend to negotiate and read MJPEG without any vendor SO. It requests USB permission only after a matching XREAL One VideoStreaming interface is present.
+- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and tests two open camera paths without any vendor SO. On One + Eye it uses the USB Ethernet TCP/HEVC path (`169.254.2.1:52995`); for firmware that exposes a separate RGB companion device (`0817:0909`, `3318:0909`, or `3318:0910`) it retains the libusb/UVC MJPEG backend.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
@@ -218,6 +218,7 @@ the previously hardware-validated implementation and `ar-drivers-rs`.
 - It then performs the required `0x31 / "3.1.1"` SDK handshake and two initial heartbeats before claiming IMU interface 1.
 - A 100 ms MCU heartbeat remains active for the session lifetime.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
+
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
 - Helen does not use the generic display-mode wire values. Matching ARLauncher,
   the preferred modes are `10` (1920x1080@90 2D), `4` (3840x1080@72 3D),
@@ -232,9 +233,12 @@ the previously hardware-validated implementation and `ar-drivers-rs`.
 
 All XREAL USB interfaces and transfers are owned by `XrealNativeUsbSession` in
 JNI/libusb. Kotlin retains Android device enumeration/permission only; XREAL
-One-family USB-Ethernet TCP DP control and IMU connect/read/frame decode are also owned by JNI.
+One-family USB-Ethernet DP control and IMU frame decode still use JNI for their
+native wire readers. Kotlin owns Android Network selection, and the One + Eye
+RGB camera backend uses Kotlin sockets for the 52995/52999 TCP/HEVC transport.
 Native transactions perform framing, request-ID matching, bounded
-asynchronous-event skipping, and write the shared binary diagnostics stream.
+asynchronous-event skipping, and write the shared binary diagnostics stream
+where the transport is native-backed.
 
 ## XREAL One family protocol notes
 
@@ -260,7 +264,41 @@ asynchronous-event skipping, and write the shared binary diagnostics stream.
 - XRLinuxDriver notes that One/One Pro/1S require latest firmware and glasses
   stabilizer/anchor features disabled. Those prerequisites apply to the IMU
   path; they do not by themselves define an open 2D/3D switching protocol.
-- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable`, XREAL `3318:0438`, an MJPEG UVC gadget, and the `uvc_bulk_15` composite mode. The implementation does not link or load ARLauncher SO files; it negotiates the UVC descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions.
+- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable` and the `uvc_bulk_15` composite-mode string. Live XREAL One + Eye testing on 2026-07-24 showed the default `3318:0438` main device reports `hasVideoCapture=false` and exposes no VideoControl/VideoStreaming interface despite that configuration string. Official host code looks for RGB companion USB identities `0817:0909`, `3318:0909`, and `3318:0910`; the open implementation therefore opens those companion devices when they appear, then negotiates UVC descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions. It does not link or load ARLauncher SO files.
+
+## XREAL One + Eye RGB camera protocol notes
+
+这部分来自 ARLauncher 真机流量抓包、logcat 和 `libnr_api.so` 字符串交叉验证，
+没有依赖官方 SO：
+
+- One + Eye 的 RGB 摄像头不是 Android Camera2，也不是标准 UVC。实测
+  `dumpsys media.camera` 为 0 个 camera；插入眼镜后 Android 侧出现 USB
+  Ethernet/NCM 网络，手机地址是 `169.254.2.10/24`，眼镜地址是
+  `169.254.2.1`。
+- 控制通道复用 One-family DP/状态 TCP 服务 `169.254.2.1:52999`。XREAL
+  frame 格式为 2 字节 command、4 字节大端 payload 长度、随后 payload。
+  RGB start command 是 `0x2781`，stop command 是 `0x2782`。
+- RGB start 请求 payload 为 `80 00 seq_hi seq_lo 1a 00`，成功 ACK 为
+  `00 00 seq_hi seq_lo 22 00`。stop 请求和 ACK 结构相同，只是 command
+  换成 `0x2782`。
+- 视频流在 `169.254.2.1:52995`。ARLauncher 的顺序是先连接 52995，再在
+  52999 发送 `0x2781` start。视频方向的 frame command 是 `0x2785`，
+  payload 中前面约 97 字节是 XREAL 帧元数据，真正的 Annex-B HEVC 从
+  后续 start code 开始。
+- 2026-07-24 的 Pocket FIT 实测中，物理重插后 One 可能短暂枚举后立刻
+  disconnect，并且 `eth0` 不出现。先进入 ARLauncher 的 AR 空间后，
+  官方 service 会让 `3318:0438`、`eth0 169.254.2.10/24`、52999/52998
+  稳定保持；随后本库的 open TCP/HEVC 后端可以在不加载官方 SO 的情况下
+  自己连接 52995/52999 拉流。
+- 实测流为 `video/hevc`，`1280x720`，`30fps`。第一帧包含 VPS/SPS/PPS
+  NAL，后续帧主要是 HEVC VCL NAL。ARLauncher native 日志中也能看到
+  `androiddec config: 0 -> 1280`、`1 -> 720`、`3 -> 30` 和
+  `Codec format 1280x720 video/hevc`。
+- `XrealOneEyeCameraSession` 实现了这个开源 TCP/HEVC 后端：通过
+  `ConnectivityManager` 找到 link address 为 `169.254.2.10` 的 Android
+  Network，连接 52995/52999，发送 start/stop，并返回同时包含 raw XREAL
+  payload、metadata、HEVC bytes 和 NAL 类型的 `XrealOneEyeHevcFrame`。
+  `XrealEyeOpenCameraSession` 仍保留给单独枚举 RGB companion/UVC 的固件。
 
 ## XREAL Light protocol notes
 

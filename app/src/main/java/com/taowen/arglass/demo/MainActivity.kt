@@ -2,6 +2,7 @@ package com.taowen.arglass.demo
 
 import android.app.Activity
 import android.content.Intent
+import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -11,6 +12,7 @@ import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.ArGlassesManager
 import com.taowen.arglass.ConnectedGlasses
 import com.taowen.arglass.GlassesCapability
+import com.taowen.arglass.XrealEyeCameraCatalog
 
 /** Device identification and navigation only. No hardware check runs here. */
 class MainActivity : Activity(), ArGlassesListener {
@@ -36,21 +38,27 @@ class MainActivity : Activity(), ArGlassesListener {
     override fun onDevicesChanged(devices: List<ConnectedGlasses>) {
         content.removeViews(3, (content.childCount - 3).coerceAtLeast(0))
         val glasses = devices.firstOrNull()
+        val usbDevices = getSystemService(UsbManager::class.java).deviceList.values
         if (glasses == null) {
             status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One / One S、Rokid Air / Max、VITURE Beast、LUCI"
             content.addView(Button(this).apply { text = "重新扫描"; setOnClickListener { manager.scan() } }, margins(top = 20))
+            if (usbDevices.any(XrealEyeCameraCatalog::identifyOpenCameraDevice)) {
+                addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
+            }
             return
         }
         status.text = "已识别：${glasses.model.displayName}\n请选择需要检查的功能"
+        if (devices.any { it.model.id == "xreal_one" || it.model.id == "xreal_one_pro" || it.model.id == "xreal_one_s" } ||
+            usbDevices.any(XrealEyeCameraCatalog::identifyOpenCameraDevice)
+        ) {
+            addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
+        }
         if (GlassesCapability.IMU in glasses.model.capabilities) addCheckButton("IMU 检测", ImuCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("开启 / 关闭 3D", DisplayModeCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities && glasses.model.supportedDisplayProfiles.isNotEmpty()) {
             addCheckButton("显示模式切换", DisplayProfileSwitchActivity::class.java)
         }
         if (devices.any { it.model.id == "viture_beast" }) addCheckButton("摄像头检测", CameraCheckActivity::class.java)
-        if (devices.any { it.model.id == "xreal_one" || it.model.id == "xreal_one_s" }) {
-            addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
-        }
     }
 
     private fun addCheckButton(caption: String, activity: Class<out Activity>) {

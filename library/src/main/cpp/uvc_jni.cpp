@@ -33,6 +33,7 @@ struct Uvc {
     bool havePts = false;
     bool frameError = false;
     int packetSize = 0;
+    uint32_t frameBufferSize = 0;
     int altSetting = 0;
     uint8_t streamingInterface = 0;
     uint8_t endpoint = 0;
@@ -123,6 +124,7 @@ bool findFormat(libusb_device_handle* handle, Uvc* u, uint8_t& format, uint8_t& 
     for (int i=0; i<config->bNumInterfaces && !format; ++i) {
         const auto& intf = config->interface[i];
         uint8_t candidateFormat=0,candidateFrame=0,candidateEndpoint=0;uint32_t candidateInterval=666666;
+        uint32_t candidateFrameBufferSize=0;
         int candidateAlt=0,candidatePacket=0,candidatePixels=0;bool candidateBulk=false;
         for (int a=0; a<intf.num_altsetting; ++a) {
             const auto& setting=intf.altsetting[a];
@@ -146,7 +148,10 @@ bool findFormat(libusb_device_handle* handle, Uvc* u, uint8_t& format, uint8_t& 
                 if(p[1]==0x24 && p[2]==0x07 && mjpeg && p[0]>=26) {
                     uint16_t w=p[5]|p[6]<<8, h=p[7]|p[8]<<8;
                     const int pixels=w*h;
-                    if(pixels>candidatePixels){candidateFormat=mjpeg;candidateFrame=p[3];candidatePixels=pixels;candidateInterval=le32(p+21);}
+                    if(pixels>candidatePixels){
+                        candidateFormat=mjpeg;candidateFrame=p[3];candidatePixels=pixels;
+                        candidateFrameBufferSize=le32(p+17);candidateInterval=le32(p+21);
+                    }
                 }
                 left-=p[0]; p+=p[0];
             }
@@ -154,7 +159,7 @@ bool findFormat(libusb_device_handle* handle, Uvc* u, uint8_t& format, uint8_t& 
         if(candidateFormat&&candidateFrame&&candidatePacket&&candidateEndpoint){
             format=candidateFormat;frame=candidateFrame;interval=candidateInterval;
             u->streamingInterface=intf.altsetting[0].bInterfaceNumber;u->endpoint=candidateEndpoint;
-            u->altSetting=candidateAlt;u->packetSize=candidatePacket;u->bulk=candidateBulk;
+            u->altSetting=candidateAlt;u->packetSize=candidatePacket;u->frameBufferSize=candidateFrameBufferSize;u->bulk=candidateBulk;
         }
     }
     libusb_free_config_descriptor(config);
@@ -187,7 +192,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_UvcCameraNative_start
     // UVC 1.1 probe/commit sequence used by both the Beast fallback and generic cameras.
     control(u,0xa1,0x83,0x0100,u->streamingInterface,probe,sizeof(probe),1500);
     std::memset(probe,0,sizeof(probe));probe[0]=1;probe[2]=format;probe[3]=frame;put32(probe+4,interval);
-    put32(probe+18,0x003f4a4d);put32(probe+22,u->packetSize);
+    put32(probe+18,u->frameBufferSize?u->frameBufferSize:4*1024*1024);put32(probe+22,u->packetSize);
     if(control(u,0x21,0x01,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<0) goto fail_claim;
     if(control(u,0xa1,0x81,0x0100,u->streamingInterface,probe,sizeof(probe),1500)<26) goto fail_claim;
     // Keep the endpoint transaction capacity selected above. dwMaxPayload is
