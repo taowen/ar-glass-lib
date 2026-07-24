@@ -53,13 +53,12 @@ but model-level mode tables, preferred modes, payload widths, EDID mappings,
 and user-visible profile lists must stay in the concrete model's driver object
 so one XREAL product can diverge without changing another product.
 
-When adding or correcting a glasses protocol, use
-[`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
-as the source of truth. Its device selection, USB identities, display-mode
-mappings, IMU transport, initialization, axes, and units take precedence when
-the references disagree. Cross-check the other projects for Android adaptation
-and additional protocol evidence, but do not use them to override
-XRLinuxDriver behavior:
+When adding or correcting a glasses protocol, cross-check every available
+reference and prefer direct hardware captures or this repository's previously
+validated implementation when references disagree. XRLinuxDriver is a broad
+Linux/OpenXR-oriented reference, but it is not the source of truth for every
+model and does not cover the XBX/Helen display-mode behavior verified in this
+project. Keep model-specific evidence with the model-specific driver:
 
 - [`android-sensor-probe`](https://github.com/taowen/android-sensor-probe)
   provides Android USB Host, permission, JNI, and hardware-check examples, plus
@@ -152,7 +151,9 @@ unrelated glasses.
 
 ## VITURE family support notes
 
-- XRLinuxDriver is authoritative for the supported PID list and model names.
+- The currently listed PID/model mapping is cross-checked against
+  XRLinuxDriver and must still be verified against hardware or vendor metadata
+  before exposing additional product IDs.
 - Luma `1131`, Luma Pro `1121/1141`, and Luma Cyber `1151` expose the open
   Gen2 `0301 [02 02]` RAW IMU stream with `7309` reports. They currently
   advertise IMU support only in the standalone APK.
@@ -214,20 +215,27 @@ the previously hardware-validated implementation and `ar-drivers-rs`.
 
 - XBX A01 uses `3318:0440`; XBX A01 Plus uses `3318:0442`.
 - Both use the Helen transport but remain separately registered models.
+- XBX/Helen behavior is based on this repository's hardware captures, release
+  history, and official SDK/probe evidence. Do not implement XBX by inheriting
+  XRLinuxDriver's generic XREAL display-mode table; that reference does not
+  cover the ARctrl-validated XBX/Helen Full SBS 3D path.
 - The driver claims MCU interface 0 first and sends `0x26`, `0x57`, `0x12(1)`, `0x02(1)`, `0x34`, `0x35`.
 - It then performs the required `0x31 / "3.1.1"` SDK handshake and two initial heartbeats before claiming IMU interface 1.
 - A 100 ms MCU heartbeat remains active for the session lifetime.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
 
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
-- Helen does not use the generic display-mode wire values. Matching ARLauncher,
-  the preferred modes are `10` (1920x1080@90 2D), `4` (3840x1080@72 3D),
-  and `9` (3840x1080@90 3D). `supportedDisplayProfiles` exposes the
-  cross-checked native combinations: 1920x1080 2D at 60/72/90/120 Hz and
-  3840x1080 Full SBS 3D at 60/72/90 Hz. 3840x1080@120 SBS is intentionally not
-  exposed until an independent implementation or hardware capture verifies it.
-  Mode values in command `0x08` are always encoded as four-byte little-endian
-  integers, matching the official `int EGlassMode` ABI.
+- Helen does not use the generic display-mode wire values. For the current XBX
+  compatibility experiment, the default 3D toggle sends `mode=3`
+  (`03 00 00 00`, 3840x1080@60 Full SBS 3D) and 2D restore sends `mode=10`
+  (`0a 00 00 00`, 1920x1080@90 2D). `mode=2` remains the 1.3.3 high-refresh
+  3D mode, not Half SBS. XBX/Helen currently exposes no Half SBS mode.
+  `supportedDisplayProfiles` exposes 1920x1080 2D at 60/72/90/120 Hz and
+  3840x1080 Full SBS 3D at 60/72/90/120 Hz. Mode values in command `0x08` are
+  always encoded as four-byte little-endian integers, matching the official
+  `int EGlassMode` ABI. Some Android hosts enumerate a valid Full SBS 3D
+  output as 640x480; that host display enumeration must not be used as the
+  command success criterion.
 - A01 and A01 Plus each provide their own `supportedDisplayProfiles` object and
   profile ID prefix, even though their current Helen mode values are identical.
 

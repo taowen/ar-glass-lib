@@ -3,6 +3,7 @@ package com.taowen.arglass.driver.xreal.onefamily
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
+import android.os.SystemClock
 import android.util.Log
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
@@ -167,7 +168,7 @@ internal class XrealOneFamilySession(
         )
     }
 
-    private fun readDpEdid(): Int? = runCatching {
+    private fun readDpEdid(reportFailure: Boolean = true): Int? = runCatching {
         XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
             NativeBridge.xrealOneDpGetCurrentEdid(
                 XrealOneNcmTransport.GLASSES_HOST,
@@ -177,16 +178,27 @@ internal class XrealOneFamilySession(
             )
         }
     }.onFailure { error ->
-        status("${model.displayName} DP 模式读取失败：${error.message}")
+        val message = "${model.displayName} DP 模式读取失败：${error.message}"
+        if (reportFailure) {
+            status(message)
+        } else {
+            Log.i(TAG, message)
+        }
     }.getOrNull()
 
     private fun verifyDpEdid(expected: Int): Boolean {
-        repeat(6) { attempt ->
-            val edid = readDpEdid()
+        // XREAL One family DP mode changes can briefly drop/re-enumerate the display.
+        // During that window the control endpoint may answer with partial/malformed EDID data
+        // even though the mode switch is already in progress. Wait for the hotplug to settle
+        // before treating readback as a failure.
+        Thread.sleep(900)
+        val deadline = SystemClock.elapsedRealtime() + 7_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val edid = readDpEdid(reportFailure = false)
             if (edid == expected) return true
-            if (attempt < 5) Thread.sleep(250)
+            Thread.sleep(500)
         }
-        return false
+        return readDpEdid(reportFailure = true) == expected
     }
 
     private fun status(message: String) {

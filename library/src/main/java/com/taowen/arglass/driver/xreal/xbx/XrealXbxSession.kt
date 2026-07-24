@@ -78,15 +78,28 @@ internal class XrealXbxSession(
         check(displayEnabled) { "This session was not opened for display-mode control" }
         ensureMcuReady()
         val helenMode = displayModeProtocol.encode(mode)
-        return usb.setMcuDisplayModeValue(helenMode, displayModeProtocol.setPayloadBytes)
+        return setDisplayModeValue(helenMode)
     }
 
     override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         ensureMcuReady()
         val helenMode = displayModeProtocol.encodeProfile(profile) ?: return false
-        return usb.setMcuDisplayModeValue(helenMode, displayModeProtocol.setPayloadBytes)
+        return setDisplayModeValue(helenMode)
     }
+
+    private fun setDisplayModeValue(value: Int): Boolean {
+        val response = mcuCommand(0x08, displayModePayload(value))
+        val status = if (response.size >= 23) response[22].toInt() and 0xff else -1
+        return displayModeProtocol.acceptsSetStatus(value, status)
+    }
+
+    private fun displayModePayload(value: Int): ByteArray =
+        if (displayModeProtocol.setPayloadBytes == 1) {
+            byteArrayOf((value and 0xff).toByte())
+        } else {
+            ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
+        }
 
     private fun runImu() {
         try {

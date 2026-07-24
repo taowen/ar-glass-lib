@@ -35,6 +35,11 @@ data class GlassesModel(
     val supportedDisplayModes: Set<DisplayMode>,
     internal val driverId: String,
     val supportedDisplayProfiles: List<GlassesDisplayProfile> = emptyList(),
+    val preferred3dDisplayMode: DisplayMode? = listOf(
+        DisplayMode.FULL_SBS_3D,
+        DisplayMode.HALF_SBS_3D,
+        DisplayMode.HIGH_REFRESH_SBS_3D,
+    ).firstOrNull(supportedDisplayModes::contains),
 ) {
     val displayName: String get() = "$manufacturer $model"
 }

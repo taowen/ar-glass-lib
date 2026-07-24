@@ -32,11 +32,7 @@ class DisplayModeCheckActivity : UsbCheckActivity() {
             }
         })
         val supportedModes = glasses.model.supportedDisplayModes
-        val preferred3dMode = listOf(
-            DisplayMode.FULL_SBS_3D,
-            DisplayMode.HALF_SBS_3D,
-            DisplayMode.HIGH_REFRESH_SBS_3D,
-        ).firstOrNull(supportedModes::contains)
+        val preferred3dMode = glasses.model.preferred3dDisplayMode
 
         preferred3dMode?.let { mode ->
             addModeButton("开启 3D", mode, control)

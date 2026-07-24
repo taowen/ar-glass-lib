@@ -12,6 +12,7 @@ internal interface XrealMcuDisplayModeProtocol {
     fun decodeProfile(value: Int): GlassesDisplayProfile?
     fun encode(mode: DisplayMode): Int
     fun encodeProfile(profile: GlassesDisplayProfile): Int?
+    fun acceptsSetStatus(value: Int, status: Int): Boolean = status == 0
 }
 
 internal data class XrealMcuDisplayProfileEntry(

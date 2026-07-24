@@ -4,10 +4,14 @@
 #include <jni.h>
 #include <android/log.h>
 #include <libusb.h>
+#include <linux/usbdevice_fs.h>
+#include <sys/ioctl.h>
 
 #include <atomic>
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <mutex>
 
 namespace {
@@ -29,7 +33,7 @@ class XrealUsbSession {
 public:
     XrealUsbSession(int fd, int vid, int pid, int mcu_interface, int mcu_in, int mcu_out,
                     int imu_interface, int imu_in, int imu_out)
-        : vid_(vid), pid_(pid), mcu_interface_(mcu_interface), mcu_in_(mcu_in), mcu_out_(mcu_out),
+        : fd_(fd), vid_(vid), pid_(pid), mcu_interface_(mcu_interface), mcu_in_(mcu_in), mcu_out_(mcu_out),
           imu_interface_(imu_interface), imu_in_(imu_in), imu_out_(imu_out) {
         libusb_set_option(nullptr, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, nullptr);
         if (libusb_init(&context_) != 0 || libusb_wrap_sys_device(context_, fd, &handle_) != 0)
@@ -43,11 +47,13 @@ public:
 
     std::vector<std::uint8_t> mcu(JNIEnv*, std::uint16_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
-        return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, payload), 0xfd, command);
+        const auto request_id = next_mcu_request_id_++;
+        return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, request_id, payload),
+                        0xfd, command, static_cast<int>(request_id));
     }
     std::vector<std::uint8_t> imu(JNIEnv*, std::uint8_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
-        return transact(imu_out_, imu_in_, ar_glass::make_imu_command(command, payload), 0xaa, command);
+        return transact(imu_out_, imu_in_, ar_glass::make_imu_command(command, payload), 0xaa, command, -1);
     }
     std::vector<std::uint8_t> read_imu(JNIEnv*, int timeout) {
         return read(imu_in_, 64, timeout);
@@ -67,15 +73,21 @@ public:
 
 private:
     int transfer(int endpoint, std::uint8_t* bytes, int size, int timeout) {
-        int actual = 0;
-        // XREAL MCU/IMU endpoints are HID interrupt endpoints. Android's
-        // bulkTransfer accepts both bulk and interrupt endpoints; libusb keeps
-        // them as separate APIs, so use the actual HID transfer type here.
-        const int result = libusb_interrupt_transfer(handle_, static_cast<unsigned char>(endpoint), bytes, size, &actual, timeout);
-        const int returned = result == 0 ? actual : result;
+        usbdevfs_bulktransfer request{};
+        request.ep = static_cast<unsigned int>(endpoint);
+        request.len = static_cast<unsigned int>(size);
+        request.timeout = static_cast<unsigned int>(std::max(timeout, 0));
+        request.data = bytes;
+        const int result = ioctl(fd_, USBDEVFS_BULK, &request);
+        const int returned = result >= 0 ? result : -errno;
         const bool input = (endpoint & LIBUSB_ENDPOINT_DIR_MASK) != 0;
         ar_glass::record_usb_transfer(vid_, pid_, input ? 1 : 2, endpoint, 0, 0, 0, returned,
-            bytes, input ? static_cast<std::size_t>(std::max(actual, 0)) : static_cast<std::size_t>(size));
+            bytes, input ? static_cast<std::size_t>(std::max(result, 0)) : static_cast<std::size_t>(size));
+        if (result < 0 && errno != ETIMEDOUT) {
+            __android_log_print(ANDROID_LOG_INFO, "ArGlassNative",
+                "XREAL usbdevfs bulk transfer failed endpoint=0x%x errno=%d (%s)",
+                endpoint, errno, std::strerror(errno));
+        }
         return returned;
     }
     std::vector<std::uint8_t> read(int endpoint, int size, int timeout) {
@@ -86,31 +98,33 @@ private:
         return result;
     }
     std::vector<std::uint8_t> transact(int out, int in,
-            const std::vector<std::uint8_t>& request, int magic, int command) {
+            const std::vector<std::uint8_t>& request, int magic, int command, int request_id) {
         if (!out || !in || !running_) return {};
         const int written = transfer(out, const_cast<std::uint8_t*>(request.data()), request.size(), 750);
         if (written != static_cast<int>(request.size())) return {};
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (running_ && std::chrono::steady_clock::now() < deadline) {
-            // XREAL One advertises a 1024-byte interrupt packet even though
-            // the FD-framed MCU message at its start is usually only 23-27
-            // bytes. A 64-byte libusb buffer reports OVERFLOW and discards the
-            // otherwise valid response.
-            auto response = read(in, 1024, 500);
+            auto response = read(in, 64, 500);
             if (response.size() < 8 || response[0] != magic) continue;
             const int response_command = magic == 0xfd && response.size() >= 17
                 ? response[15] | response[16] << 8 : response[7];
-            if (response_command == command) return response;
+            const int response_id = magic == 0xfd && response.size() >= 11
+                ? response[7] | response[8] << 8 | response[9] << 16 | response[10] << 24 : -1;
+            if (response_command == command && (request_id < 0 || response_id == request_id)) return response;
         }
+        __android_log_print(ANDROID_LOG_INFO, "ArGlassNative",
+            "XREAL command timed out magic=0x%x command=0x%x requestId=%d", magic, command, request_id);
         return {};
     }
 
     libusb_context* context_ = nullptr;
     libusb_device_handle* handle_ = nullptr;
+    int fd_;
     [[maybe_unused]] int vid_, pid_;
     int mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
     std::mutex command_mutex_;
     std::atomic_bool running_{true};
+    std::atomic_uint32_t next_mcu_request_id_{1};
 };
 
 XrealUsbSession* session(jlong handle) { return reinterpret_cast<XrealUsbSession*>(handle); }
@@ -157,10 +171,17 @@ UsbSession* usb_session(jlong handle) { return reinterpret_cast<UsbSession*>(han
 int parse_xreal_mcu_display_mode_value(const std::vector<std::uint8_t>& response, int bytes) {
     if (bytes == 1 && response.size() >= 24) return static_cast<int>(response[23]);
     if (bytes == 4 && response.size() >= 27) {
-        return static_cast<int>(response[23]) |
-               (static_cast<int>(response[24]) << 8) |
-               (static_cast<int>(response[25]) << 16) |
-               (static_cast<int>(response[26]) << 24);
+        const int first_payload_byte = static_cast<int>(response[22]);
+        const int value = static_cast<int>(response[23]) |
+                          (static_cast<int>(response[24]) << 8) |
+                          (static_cast<int>(response[25]) << 16) |
+                          (static_cast<int>(response[26]) << 24);
+        if (value != 0 || first_payload_byte == 0) return value;
+        // XBX A01 2D readback was observed as "01 00 00 00 00" after
+        // set-mode success, while 3D readback uses "00 <uint32 mode>".
+        // Treat the non-zero first byte as the mode only when the uint32
+        // field is empty.
+        return first_payload_byte;
     }
     return -1;
 }
@@ -188,8 +209,8 @@ Java_com_taowen_arglass_NativeBridge_makeImuCommand(JNIEnv* env, jobject, jint c
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_taowen_arglass_NativeBridge_makeMcuCommand(JNIEnv* env, jobject, jint command, jint request_id, jbyteArray payload) {
     const auto bytes = to_vector(env, payload);
-    (void) request_id;
-    return to_array(env, ar_glass::make_mcu_command(static_cast<std::uint16_t>(command), bytes));
+    return to_array(env, ar_glass::make_mcu_command(
+        static_cast<std::uint16_t>(command), static_cast<std::uint32_t>(request_id), bytes));
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
