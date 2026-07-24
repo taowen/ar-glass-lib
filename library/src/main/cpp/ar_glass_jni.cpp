@@ -153,6 +153,30 @@ private:
     int vid_, pid_;
 };
 UsbSession* usb_session(jlong handle) { return reinterpret_cast<UsbSession*>(handle); }
+
+int parse_xreal_mcu_display_mode_value(const std::vector<std::uint8_t>& response, int bytes) {
+    if (bytes == 1 && response.size() >= 24) return static_cast<int>(response[23]);
+    if (bytes == 4 && response.size() >= 27) {
+        return static_cast<int>(response[23]) |
+               (static_cast<int>(response[24]) << 8) |
+               (static_cast<int>(response[25]) << 16) |
+               (static_cast<int>(response[26]) << 24);
+    }
+    return -1;
+}
+
+std::vector<std::uint8_t> xreal_mcu_display_mode_payload(int value, int bytes) {
+    if (bytes == 1) return {static_cast<std::uint8_t>(value & 0xff)};
+    if (bytes == 4) {
+        return {
+            static_cast<std::uint8_t>(value & 0xff),
+            static_cast<std::uint8_t>((value >> 8) & 0xff),
+            static_cast<std::uint8_t>((value >> 16) & 0xff),
+            static_cast<std::uint8_t>((value >> 24) & 0xff),
+        };
+    }
+    throw std::runtime_error("Unsupported XREAL display mode payload size");
+}
 } // namespace
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -201,6 +225,19 @@ Java_com_taowen_arglass_NativeBridge_createXrealUsbSession(JNIEnv* env, jobject,
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_taowen_arglass_NativeBridge_xrealMcuCommand(JNIEnv* env, jobject, jlong handle, jint command, jbyteArray payload) {
     return to_array(env, session(handle)->mcu(env, command, to_vector(env, payload)));
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_taowen_arglass_NativeBridge_xrealMcuGetDisplayModeValue(JNIEnv* env, jobject, jlong handle,
+        jint payload_bytes) {
+    return parse_xreal_mcu_display_mode_value(
+        session(handle)->mcu(env, 0x07, {}), static_cast<int>(payload_bytes));
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_taowen_arglass_NativeBridge_xrealMcuSetDisplayModeValue(JNIEnv* env, jobject, jlong handle,
+        jint mode_value, jint payload_bytes) {
+    const auto response = session(handle)->mcu(
+        env, 0x08, xreal_mcu_display_mode_payload(static_cast<int>(mode_value), static_cast<int>(payload_bytes)));
+    return response.size() >= 23 && (response[22] & 0xff) == 0;
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_taowen_arglass_NativeBridge_xrealImuCommand(JNIEnv* env, jobject, jlong handle, jint command, jbyteArray payload) {

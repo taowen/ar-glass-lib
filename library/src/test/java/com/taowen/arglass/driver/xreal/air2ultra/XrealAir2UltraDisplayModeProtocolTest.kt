@@ -11,7 +11,7 @@ class XrealAir2UltraDisplayModeProtocolTest {
     fun `encodes ARLauncher Flora defaults and high refresh mode`() {
         assertEquals(10, XrealAir2UltraDisplayModeProtocol.encode(DisplayMode.MIRROR_2D))
         assertEquals(4, XrealAir2UltraDisplayModeProtocol.encode(DisplayMode.FULL_SBS_3D))
-        assertEquals(2, XrealAir2UltraDisplayModeProtocol.encode(DisplayMode.HIGH_REFRESH_SBS_3D))
+        assertEquals(9, XrealAir2UltraDisplayModeProtocol.encode(DisplayMode.HIGH_REFRESH_SBS_3D))
         assertThrows(IllegalStateException::class.java) {
             XrealAir2UltraDisplayModeProtocol.encode(DisplayMode.HALF_SBS_3D)
         }
@@ -23,9 +23,10 @@ class XrealAir2UltraDisplayModeProtocolTest {
             assertEquals(DisplayMode.MIRROR_2D, XrealAir2UltraDisplayModeProtocol.decode(it))
         }
         listOf(3, 4, 9).forEach {
-            assertEquals(DisplayMode.FULL_SBS_3D, XrealAir2UltraDisplayModeProtocol.decode(it))
+            val expected = if (it == 9) DisplayMode.HIGH_REFRESH_SBS_3D else DisplayMode.FULL_SBS_3D
+            assertEquals(expected, XrealAir2UltraDisplayModeProtocol.decode(it))
         }
-        assertEquals(DisplayMode.HIGH_REFRESH_SBS_3D, XrealAir2UltraDisplayModeProtocol.decode(2))
+        assertNull(XrealAir2UltraDisplayModeProtocol.decode(2))
         assertNull(XrealAir2UltraDisplayModeProtocol.decode(0))
     }
 }

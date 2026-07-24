@@ -35,6 +35,12 @@ internal class XrealNativeUsbSession(
     fun mcu(command: Int, payload: ByteArray = byteArrayOf()): ByteArray =
         NativeBridge.xrealMcuCommand(handle, command, payload)
 
+    fun mcuDisplayModeValue(payloadBytes: Int): Int =
+        NativeBridge.xrealMcuGetDisplayModeValue(handle, payloadBytes)
+
+    fun setMcuDisplayModeValue(modeValue: Int, payloadBytes: Int): Boolean =
+        NativeBridge.xrealMcuSetDisplayModeValue(handle, modeValue, payloadBytes)
+
     fun imu(command: Int, payload: ByteArray = byteArrayOf()): ByteArray =
         NativeBridge.xrealImuCommand(handle, command, payload)
 

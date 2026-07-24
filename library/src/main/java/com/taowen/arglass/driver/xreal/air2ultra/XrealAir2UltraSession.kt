@@ -4,6 +4,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.NativeBridge
@@ -34,22 +35,29 @@ internal class XrealAir2UltraSession(
     @Synchronized
     override fun queryDisplayMode(): DisplayMode? {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
-        val response = usb.mcu(0x07)
-        val value = when {
-            response.size >= 27 -> ByteBuffer.wrap(response, 23, 4).order(ByteOrder.LITTLE_ENDIAN).int
-            response.size >= 24 -> response[23].toInt() and 0xff
-            else -> return null
-        }
+        val value = usb.mcuDisplayModeValue(payloadBytes = 1).takeIf { it >= 0 } ?: return null
         return XrealAir2UltraDisplayModeProtocol.decode(value)
+    }
+
+    @Synchronized
+    override fun queryDisplayProfile(): GlassesDisplayProfile? {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
+        val value = usb.mcuDisplayModeValue(payloadBytes = 1).takeIf { it >= 0 } ?: return null
+        return XrealAir2UltraDisplayModeProtocol.decodeProfile(value)
     }
 
     @Synchronized
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
         val floraMode = XrealAir2UltraDisplayModeProtocol.encode(mode)
-        return usb.mcu(0x08, byteArrayOf(floraMode.toByte())).let {
-            it.size >= 23 && (it[22].toInt() and 0xff) == 0
-        }
+        return usb.setMcuDisplayModeValue(floraMode, payloadBytes = 1)
+    }
+
+    @Synchronized
+    override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
+        val floraMode = XrealAir2UltraDisplayModeProtocol.encodeProfile(profile) ?: return false
+        return usb.setMcuDisplayModeValue(floraMode, payloadBytes = 1)
     }
 
     private fun runImu() {

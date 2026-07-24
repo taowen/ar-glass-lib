@@ -8,6 +8,7 @@ import android.util.Log
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.NativeBridge
@@ -27,6 +28,7 @@ internal class XrealOneFamilySession(
     feature: SessionFeature,
     private val executor: Executor,
     private val listener: ArGlassesListener,
+    private val displayModeProtocol: XrealOneDpDisplayModeProtocol,
 ) : DriverSession {
     private val running = AtomicBoolean(true)
     private val displayEnabled = (feature == SessionFeature.DISPLAY_MODE || feature == SessionFeature.ALL) &&
@@ -42,8 +44,20 @@ internal class XrealOneFamilySession(
             return null
         }
         return readDpEdid()?.let { edid ->
-            XrealOneFamilyDisplayModeProtocol.decode(edid).also { mode ->
+            displayModeProtocol.decode(edid).also { mode ->
                 status("${model.displayName} DP EDID=$edid，显示模式=${mode?.name ?: "未知"}")
+            }
+        }
+    }
+
+    override fun queryDisplayProfile(): GlassesDisplayProfile? {
+        if (!displayEnabled) {
+            status("${model.displayName} 未声明 2D/3D 切换能力")
+            return null
+        }
+        return readDpEdid()?.let { edid ->
+            displayModeProtocol.decodeProfile(edid).also { profile ->
+                status("${model.displayName} DP EDID=$edid，显示 profile=${profile?.let(::profileLabel) ?: "未知"}")
             }
         }
     }
@@ -53,7 +67,7 @@ internal class XrealOneFamilySession(
             status("${model.displayName} 未声明 2D/3D 切换能力")
             return false
         }
-        val command = XrealOneFamilyDisplayModeProtocol.encode(mode)
+        val command = displayModeProtocol.encode(mode)
         if (command == null) {
             status("${model.displayName} 未开放 ${mode.name} 切换；仅真机验证 2D 与 Full SBS 3D")
             return false
@@ -73,6 +87,35 @@ internal class XrealOneFamilySession(
         }
         return verified
     }
+
+    override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        if (!displayEnabled) {
+            status("${model.displayName} 未声明显示模式切换能力")
+            return false
+        }
+        val command = displayModeProtocol.encodeProfile(profile)
+        if (command == null) {
+            status("${model.displayName} 未开放 ${profileLabel(profile)} 切换")
+            return false
+        }
+        val transportOk = runCatching {
+            withXrealNcmNetwork {
+                NativeBridge.xrealOneDpSetDisplayMode(DP_HOST, DP_PORT, command.edid, command.inputMode, 2_000, 1_200)
+            }
+        }.onFailure { error ->
+            status("${model.displayName} DP ACK 未完成，继续读回 EDID 验证：${error.message}")
+        }.getOrDefault(false)
+        val verified = transportOk || verifyDpEdid(command.edid)
+        if (verified) {
+            status("${model.displayName} 已切换 DP profile：${profileLabel(profile)}")
+        } else {
+            status("${model.displayName} DP profile 切换未验证成功：${profileLabel(profile)}")
+        }
+        return verified
+    }
+
+    private fun profileLabel(profile: GlassesDisplayProfile): String =
+        "${profile.width}×${profile.height}@${profile.refreshRateHz}Hz ${profile.layout}"
 
     private fun readEthernetImu() {
         var handle = 0L

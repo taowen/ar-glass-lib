@@ -150,5 +150,12 @@ class ArGlassesSession internal constructor(
 ) : Closeable {
     fun queryDisplayMode(): DisplayMode? = delegate.queryDisplayMode()
     fun setDisplayMode(mode: DisplayMode): Boolean = delegate.setDisplayMode(mode)
+    fun queryDisplayProfile(): GlassesDisplayProfile? = delegate.queryDisplayProfile()
+    fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        require(model.supportedDisplayProfiles.any { it.id == profile.id }) {
+            "Display profile ${profile.id} is not declared by ${model.displayName}"
+        }
+        return delegate.setDisplayProfile(profile)
+    }
     override fun close() = delegate.close()
 }

@@ -1,25 +1,41 @@
 package com.taowen.arglass.driver.xreal.onefamily
 
 import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayLayout
+import com.taowen.arglass.GlassesDisplayProfile
 
-/** XREAL One-family DP RPC EDID values captured from Control My Glasses 1.1.0 on real hardware. */
-internal object XrealOneFamilyDisplayModeProtocol {
-    private const val EDID_3D_3840_1080_60HZ = 5
-    private const val EDID_3D_3840_1080_72HZ = 6
-    private const val EDID_3D_3840_1080_90HZ = 7
-    private const val EDID_2D_1920_1080_90HZ = 9
+internal data class XrealOneDisplayModeCommand(val edid: Int, val inputMode: Int)
 
-    data class Command(val edid: Int, val inputMode: Int)
+internal data class XrealOneDisplayProfileEntry(
+    val command: XrealOneDisplayModeCommand,
+    val profile: GlassesDisplayProfile,
+)
 
-    fun decode(edid: Int): DisplayMode? = when (edid) {
-        EDID_2D_1920_1080_90HZ -> DisplayMode.MIRROR_2D
-        EDID_3D_3840_1080_60HZ, EDID_3D_3840_1080_72HZ, EDID_3D_3840_1080_90HZ -> DisplayMode.FULL_SBS_3D
-        else -> null
-    }
-
-    fun encode(mode: DisplayMode): Command? = when (mode) {
-        DisplayMode.MIRROR_2D -> Command(EDID_2D_1920_1080_90HZ, inputMode = 0)
-        DisplayMode.FULL_SBS_3D -> Command(EDID_3D_3840_1080_60HZ, inputMode = 1)
-        DisplayMode.HALF_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D -> null
-    }
+internal interface XrealOneDpDisplayModeProtocol {
+    val profiles: List<GlassesDisplayProfile>
+    fun decode(edid: Int): DisplayMode?
+    fun decodeProfile(edid: Int): GlassesDisplayProfile?
+    fun encode(mode: DisplayMode): XrealOneDisplayModeCommand?
+    fun encodeProfile(profile: GlassesDisplayProfile): XrealOneDisplayModeCommand?
 }
+
+internal fun xrealOneDisplayProfile(
+    profileIdPrefix: String,
+    edid: Int,
+    inputMode: Int,
+    width: Int,
+    height: Int,
+    refreshRateHz: Int,
+    layout: GlassesDisplayLayout,
+    compatibilityMode: DisplayMode,
+) = XrealOneDisplayProfileEntry(
+    XrealOneDisplayModeCommand(edid, inputMode),
+    GlassesDisplayProfile(
+        id = "$profileIdPrefix$edid",
+        width = width,
+        height = height,
+        refreshRateHz = refreshRateHz,
+        layout = layout,
+        compatibilityMode = compatibilityMode,
+    ),
+)

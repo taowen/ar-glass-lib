@@ -27,6 +27,7 @@ Supported models:
 - Identify the glasses model from Android USB Host descriptors.
 - Read versioned XREAL IMU reports (acceleration, angular velocity, magnetic field, temperature, and device timestamp).
 - Query and switch 2D, Half SBS, Full SBS, and high-refresh SBS display modes.
+- List and switch glasses-native display profiles using common width, height, refresh-rate, and 2D/3D layout metadata while keeping each vendor's protocol value inside its driver.
 - Expose capability metadata for host apps that need to correlate glasses models with Android external-display information.
 - Reuse the protocol implementation from Kotlin/Java or link the native `ar_glass` CMake target directly into another JNI library.
 
@@ -34,6 +35,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 
 - `ImuCheckActivity`: opens only the IMU interface and validates its stream.
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
+- `DisplayProfileSwitchActivity`: lists every verified glasses-native display profile declared by the current driver, shows `width × height @ refresh-rate` plus the 2D/3D layout, and switches by asking the driver to translate that common profile into its own protocol value.
 - `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
 - `XrealEyeCameraCheckActivity`: appears for the XREAL One family and uses the open libusb/UVC backend to negotiate and read MJPEG without any vendor SO. It requests USB permission only after a matching XREAL One VideoStreaming interface is present.
 
@@ -45,6 +47,11 @@ The standalone APK also has a **导出诊断日志** action. It exports two sepa
 - `crashes.bin`: append-only uncaught exception records with `ARCR` magic, format version 1, timestamp, thread name, and stack trace bytes.
 
 Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
+For XREAL display profiles, each concrete model declares its own
+`supportedDisplayProfiles` and profile IDs. Shared JNI transports are allowed,
+but model-level mode tables, preferred modes, payload widths, EDID mappings,
+and user-visible profile lists must stay in the concrete model's driver object
+so one XREAL product can diverge without changing another product.
 
 When adding or correcting a glasses protocol, use
 [`XRLinuxDriver/src/devices`](https://github.com/wheaney/XRLinuxDriver/tree/main/src/devices)
@@ -65,6 +72,22 @@ XRLinuxDriver behavior:
 Follow any interface-library or device-specific dependency used by a reference
 implementation. Compare independent implementations where possible; do not
 infer one model's protocol solely from another model in this library.
+
+The two primary open-source references are also checked in as reference-only
+Git submodules for local cross-checking:
+
+```bash
+git submodule update --init --recursive references/open-source/XRLinuxDriver references/open-source/ar-drivers-rs
+```
+
+- `references/open-source/XRLinuxDriver`
+- `references/open-source/ar-drivers-rs`
+
+These submodules are not build inputs. Do not add their directories to Gradle
+source sets, CMake `add_subdirectory`, compiler include paths, JNI sources, or
+runtime asset packaging. When behavior is copied into this library, reimplement
+the protocol in `library/src/main/.../driver/...` with this repository's JNI and
+diagnostics boundaries instead of importing or compiling reference files.
 
 ## Build
 
@@ -90,6 +113,10 @@ val connected = manager.scan().firstOrNull() ?: return
 if (!manager.hasPermission(connected.device)) manager.requestPermission(connected.device)
 val session = manager.open(connected.device)
 session.setDisplayMode(DisplayMode.FULL_SBS_3D)
+val profile = connected.model.supportedDisplayProfiles.firstOrNull {
+    it.width == 1920 && it.height == 1080 && it.refreshRateHz == 120
+}
+if (profile != null) session.setDisplayProfile(profile)
 ```
 
 `ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time.
@@ -165,15 +192,22 @@ unrelated glasses.
 Protocol behavior was adapted from the open-source `android-sensor-probe` project and its XREAL protocol research. Hardware behavior still needs validation on each firmware version.
 
 For Air 2 Ultra/Flora, the ARLauncher-compatible preferred modes are `10`
-(1920x1080@90 2D), `4` (3840x1080@72 3D), and `2` (3840x1080@120 3D).
-Flora's official mode table has no Half SBS entry. Unlike Helen, Flora encodes
-the command `0x08` mode payload as one byte; this matches the previously
-hardware-validated implementation and `ar-drivers-rs`.
+(1920x1080@90 2D), `4` (3840x1080@72 3D), and `9`
+(3840x1080@90 3D). `supportedDisplayProfiles` exposes the cross-checked
+native combinations: 1920x1080 2D at 60/72/90/120 Hz and 3840x1080 Full SBS
+3D at 60/72/90 Hz. 3840x1080@120 SBS is intentionally not exposed: ARLauncher
+and `ar-drivers-rs` do not list it, and XRLinuxDriver maps the 120 Hz SBS slot
+down to 90 Hz SBS. Flora's official mode table has no Half SBS entry. Unlike
+Helen, Flora encodes the command `0x08` mode payload as one byte; this matches
+the previously hardware-validated implementation and `ar-drivers-rs`.
 
 ## XREAL Air family protocol notes
 
 - Air `3318:0424`, Air 2 `3318:0428`, and Air 2 Pro `3318:0432` use MCU interface 4 and IMU interface 3.
 - All three use the one-byte `0x07` / `0x08` display-mode protocol and expose 2D, Full SBS, Half SBS, and 90 Hz SBS modes.
+- Their current cross-checked mode values match, but each model has its own
+  profile object and profile ID prefix (`xreal_air_*`, `xreal_air_2_*`,
+  `xreal_air_2_pro_*`) instead of sharing one public profile table.
 - Their 64-byte versioned IMU reports and initialization commands are cross-checked against both `ar-drivers-rs` and XRLinuxDriver's `xrealInterfaceLibrary`.
 
 ## XREAL XBX protocol notes
@@ -187,8 +221,14 @@ hardware-validated implementation and `ar-drivers-rs`.
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
 - Helen does not use the generic display-mode wire values. Matching ARLauncher,
   the preferred modes are `10` (1920x1080@90 2D), `4` (3840x1080@72 3D),
-  and `2` (3840x1080@120 3D). Mode values in command `0x08` are always encoded
-  as four-byte little-endian integers, matching the official `int EGlassMode` ABI.
+  and `9` (3840x1080@90 3D). `supportedDisplayProfiles` exposes the
+  cross-checked native combinations: 1920x1080 2D at 60/72/90/120 Hz and
+  3840x1080 Full SBS 3D at 60/72/90 Hz. 3840x1080@120 SBS is intentionally not
+  exposed until an independent implementation or hardware capture verifies it.
+  Mode values in command `0x08` are always encoded as four-byte little-endian
+  integers, matching the official `int EGlassMode` ABI.
+- A01 and A01 Plus each provide their own `supportedDisplayProfiles` object and
+  profile ID prefix, even though their current Helen mode values are identical.
 
 All XREAL USB interfaces and transfers are owned by `XrealNativeUsbSession` in
 JNI/libusb. Kotlin retains Android device enumeration/permission only; XREAL
@@ -204,7 +244,14 @@ asynchronous-event skipping, and write the shared binary diagnostics stream.
   Verified packets are `0x275e` get current EDID, `0x275f` set current EDID,
   and `0x2822` set DP input mode. `EDID=5 + inputMode=1` switches XREAL One to
   `3840x1080@60` Full SBS 3D; `EDID=9 + inputMode=0` restores
-  `1920x1080@90` 2D.
+  `1920x1080@90` 2D. These are the only One-family profiles exposed through
+  `supportedDisplayProfiles`; additional EDID values are kept out of the public
+  profile list until they are verified from hardware captures or open drivers.
+- One, One Pro, and One S each provide their own EDID profile object and profile
+  ID prefix. The TCP DP transport is shared; the user-visible profile list is
+  not. The One hardware capture is the current direct evidence for EDID 5/9;
+  additional per-model EDID profiles should be added only after model-specific
+  hardware captures or open-driver evidence.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
 - The JNI TCP reader follows XRLinuxDriver's vendored `xreal_one_driver`: find
   header `28 36 00 00 00 80`, require marker `00 40 1F 00 00 40`, reassemble

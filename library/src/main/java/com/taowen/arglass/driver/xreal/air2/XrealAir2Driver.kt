@@ -17,9 +17,9 @@ internal object XrealAir2Driver : GlassesDriver {
     private const val PID = 0x0428
 
     override fun identify(device: UsbDevice): GlassesModel? = if (device.vendorId == VID && device.productId == PID)
-        model(id, "Air 2", PID) else null
+        model(id, "Air 2", PID, XrealAir2DisplayModeProtocol.profiles) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,
                       executor: Executor, listener: ArGlassesListener): DriverSession =
-        XrealAirFamilySession(usbManager, device, model, feature, executor, listener)
+        XrealAirFamilySession(usbManager, device, model, feature, executor, listener, XrealAir2DisplayModeProtocol)
 }

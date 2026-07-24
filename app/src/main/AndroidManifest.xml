@@ -5,6 +5,7 @@
     <application android:name=".CheckApplication" android:theme="@style/AppTheme" android:label="AR Glass Check">
         <activity android:name=".ImuCheckActivity" android:exported="false" />
         <activity android:name=".DisplayModeCheckActivity" android:exported="false" />
+        <activity android:name=".DisplayProfileSwitchActivity" android:exported="false" />
         <activity android:name=".CameraCheckActivity" android:exported="false" />
         <activity android:name=".XrealEyeCameraCheckActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">

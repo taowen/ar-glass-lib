@@ -22,6 +22,7 @@ internal object XrealAir2UltraDriver : GlassesDriver {
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
             setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D),
             id,
+            supportedDisplayProfiles = XrealAir2UltraDisplayModeProtocol.profiles,
         ) else null
 
     override fun open(

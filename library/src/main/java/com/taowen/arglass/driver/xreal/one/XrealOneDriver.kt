@@ -23,6 +23,7 @@ internal object XrealOneDriver : GlassesDriver {
             id, "XREAL", "One", VID, PID,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION, GlassesCapability.CAMERA),
             setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D), id,
+            supportedDisplayProfiles = XrealOneDisplayModeProtocol.profiles,
         )
     } else null
 
@@ -33,7 +34,7 @@ internal object XrealOneDriver : GlassesDriver {
         feature: SessionFeature,
         executor: Executor,
         listener: ArGlassesListener,
-    ): DriverSession = XrealOneFamilySession(null, usbManager, device, model, feature, executor, listener)
+    ): DriverSession = XrealOneFamilySession(null, usbManager, device, model, feature, executor, listener, XrealOneDisplayModeProtocol)
 
     override fun open(
         connectivityManager: ConnectivityManager?,
@@ -43,5 +44,5 @@ internal object XrealOneDriver : GlassesDriver {
         feature: SessionFeature,
         executor: Executor,
         listener: ArGlassesListener,
-    ): DriverSession = XrealOneFamilySession(connectivityManager, usbManager, device, model, feature, executor, listener)
+    ): DriverSession = XrealOneFamilySession(connectivityManager, usbManager, device, model, feature, executor, listener, XrealOneDisplayModeProtocol)
 }

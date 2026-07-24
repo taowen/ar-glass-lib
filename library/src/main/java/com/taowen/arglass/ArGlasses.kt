@@ -14,6 +14,17 @@ enum class DisplayMode(val wireValue: Int, val expectedWidth: Int, val expectedH
     companion object { fun fromWireValue(value: Int) = entries.firstOrNull { it.wireValue == value } }
 }
 
+enum class GlassesDisplayLayout { MONO_2D, HALF_SBS_3D, FULL_SBS_3D }
+
+data class GlassesDisplayProfile(
+    val id: String,
+    val width: Int,
+    val height: Int,
+    val refreshRateHz: Int,
+    val layout: GlassesDisplayLayout,
+    val compatibilityMode: DisplayMode,
+)
+
 data class GlassesModel(
     val id: String,
     val manufacturer: String,
@@ -23,6 +34,7 @@ data class GlassesModel(
     val capabilities: Set<GlassesCapability>,
     val supportedDisplayModes: Set<DisplayMode>,
     internal val driverId: String,
+    val supportedDisplayProfiles: List<GlassesDisplayProfile> = emptyList(),
 ) {
     val displayName: String get() = "$manufacturer $model"
 }

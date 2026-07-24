@@ -5,11 +5,13 @@ import android.hardware.usb.UsbManager
 import android.os.SystemClock
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.NativeBridge
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
+import com.taowen.arglass.driver.xreal.XrealMcuDisplayModeProtocol
 import com.taowen.arglass.driver.xreal.XrealNativeUsbSession
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -24,6 +26,7 @@ internal class XrealXbxSession(
     feature: SessionFeature,
     private val executor: Executor,
     private val listener: ArGlassesListener,
+    private val displayModeProtocol: XrealMcuDisplayModeProtocol,
 ) : DriverSession {
     private val running = AtomicBoolean(true)
     private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
@@ -60,22 +63,29 @@ internal class XrealXbxSession(
     override fun queryDisplayMode(): DisplayMode? {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         ensureMcuReady()
-        val response = usb.mcu(0x07)
-        val value = when {
-            response.size >= 27 -> ByteBuffer.wrap(response, 23, 4).order(ByteOrder.LITTLE_ENDIAN).int
-            response.size >= 24 -> response[23].toInt() and 0xff
-            else -> return null
-        }
-        return XrealXbxDisplayModeProtocol.decode(value)
+        val value = usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 } ?: return null
+        return displayModeProtocol.decode(value)
+    }
+
+    override fun queryDisplayProfile(): GlassesDisplayProfile? {
+        check(displayEnabled) { "This session was not opened for display-mode control" }
+        ensureMcuReady()
+        val value = usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 } ?: return null
+        return displayModeProtocol.decodeProfile(value)
     }
 
     override fun setDisplayMode(mode: DisplayMode): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         ensureMcuReady()
-        val helenMode = XrealXbxDisplayModeProtocol.encode(mode)
-        val payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(helenMode).array()
-        val response = usb.mcu(0x08, payload)
-        return response.size >= 23 && (response[22].toInt() and 0xff) == 0
+        val helenMode = displayModeProtocol.encode(mode)
+        return usb.setMcuDisplayModeValue(helenMode, displayModeProtocol.setPayloadBytes)
+    }
+
+    override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        check(displayEnabled) { "This session was not opened for display-mode control" }
+        ensureMcuReady()
+        val helenMode = displayModeProtocol.encodeProfile(profile) ?: return false
+        return usb.setMcuDisplayModeValue(helenMode, displayModeProtocol.setPayloadBytes)
     }
 
     private fun runImu() {

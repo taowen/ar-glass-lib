@@ -18,16 +18,17 @@ internal object XrealAirDriver : GlassesDriver {
     private const val PID = 0x0424
 
     override fun identify(device: UsbDevice): GlassesModel? = if (device.vendorId == VID && device.productId == PID)
-        model(id, "Air", PID) else null
+        model(id, "Air", PID, XrealAirDisplayModeProtocol.profiles) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,
                       executor: Executor, listener: ArGlassesListener): DriverSession =
-        XrealAirFamilySession(usbManager, device, model, feature, executor, listener)
+        XrealAirFamilySession(usbManager, device, model, feature, executor, listener, XrealAirDisplayModeProtocol)
 }
 
-internal fun model(id: String, name: String, pid: Int) = GlassesModel(
+internal fun model(id: String, name: String, pid: Int, profiles: List<com.taowen.arglass.GlassesDisplayProfile>) = GlassesModel(
     id, "XREAL", name, 0x3318, pid,
     setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
     setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HALF_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D),
     id,
+    supportedDisplayProfiles = profiles,
 )

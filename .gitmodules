@@ -1,0 +1,6 @@
+[submodule "references/open-source/XRLinuxDriver"]
+	path = references/open-source/XRLinuxDriver
+	url = https://github.com/wheaney/XRLinuxDriver.git
+[submodule "references/open-source/ar-drivers-rs"]
+	path = references/open-source/ar-drivers-rs
+	url = https://github.com/badicsalex/ar-drivers-rs.git
