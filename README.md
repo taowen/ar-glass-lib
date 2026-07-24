@@ -27,14 +27,13 @@ Supported models:
 - Identify the glasses model from Android USB Host descriptors.
 - Read versioned XREAL IMU reports (acceleration, angular velocity, magnetic field, temperature, and device timestamp).
 - Query and switch 2D, Half SBS, Full SBS, and high-refresh SBS display modes.
-- Inspect the resolution and refresh rate exposed by Android for the external display.
+- Expose capability metadata for host apps that need to correlate glasses models with Android external-display information.
 - Reuse the protocol implementation from Kotlin/Java or link the native `ar_glass` CMake target directly into another JNI library.
 
 The `library` module is the reusable API. The `app` module is an independently installable, framework-Views diagnostic UI that waits for glasses, identifies them, and lets the user run each check explicitly. Each check has its own Activity and implementation:
 
 - `ImuCheckActivity`: opens only the IMU interface and validates its stream.
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
-- `ResolutionCheckActivity`: uses `DisplayManager` and never opens USB endpoints.
 - `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
 - `XrealEyeCameraCheckActivity`: appears for the XREAL One family and uses the open libusb/UVC backend to negotiate and read MJPEG without any vendor SO. It requests USB permission only after a matching XREAL One VideoStreaming interface is present.
 
@@ -129,7 +128,7 @@ unrelated glasses.
 - XRLinuxDriver is authoritative for the supported PID list and model names.
 - Luma `1131`, Luma Pro `1121/1141`, and Luma Cyber `1151` expose the open
   Gen2 `0301 [02 02]` RAW IMU stream with `7309` reports. They currently
-  advertise IMU and resolution checks only.
+  advertise IMU support only in the standalone APK.
 - XRLinuxDriver performs their 2D/3D switching through VITURE's proprietary
   `libglasses.so`. The Android SDK license prohibits unauthorized copying,
   distribution, and use, so ar-glass-lib neither bundles it nor falsely exposes
@@ -143,7 +142,7 @@ unrelated glasses.
   implementation calls the proprietary `libRayNeoXRMiniSDK.so`.
 - The open backend sends HID command `66 01` and decodes the independently
   captured `99 65` acceleration, angular velocity, magnetic field, temperature,
-  and timestamp report. It therefore advertises IMU and resolution only.
+  and timestamp report. It therefore advertises IMU support only in the standalone APK.
 - XRLinuxDriver ships the RayNeo SDK only for x86_64, so it cannot be used in
   this Android ARM64 library. 2D/3D is intentionally not advertised until that
   SDK behavior has an open protocol implementation.
@@ -152,7 +151,7 @@ unrelated glasses.
 
 - USB identities: VID `0x2C30`, PID `0x1030` or `0x1031`.
 - 2D/3D switching uses a 64-byte HID Feature Report (`SET_REPORT`, value `0x0302`).
-- The LUCI driver exposes display-mode and resolution checks. It does not advertise IMU because this protocol does not provide a verified LUCI sensor stream.
+- The LUCI driver exposes display-mode checks. It does not advertise IMU because this protocol does not provide a verified LUCI sensor stream.
 
 ## XREAL Air 2 Ultra protocol notes
 
