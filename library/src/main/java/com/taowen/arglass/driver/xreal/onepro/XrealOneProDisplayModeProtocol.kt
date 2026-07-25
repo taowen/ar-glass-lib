@@ -12,6 +12,8 @@ import com.taowen.arglass.driver.xreal.onefamily.xrealOneDisplayProfile
 internal object XrealOneProDisplayModeProtocol : XrealOneDpDisplayModeProtocol {
     private const val EDID_3D_3840_1080_60HZ = 5
     private const val EDID_2D_1920_1080_90HZ = 9
+    override val requireInputModeReadback = false
+    override val inputModeWriteAttempts = 3
 
     private val profileTable = listOf(
         profile(EDID_3D_3840_1080_60HZ, inputMode = 1, 3840, 1080, 60, GlassesDisplayLayout.FULL_SBS_3D, DisplayMode.FULL_SBS_3D),

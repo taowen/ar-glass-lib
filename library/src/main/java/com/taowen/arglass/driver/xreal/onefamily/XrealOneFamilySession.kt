@@ -229,20 +229,40 @@ internal class XrealOneFamilySession(
         val deadline = SystemClock.elapsedRealtime() + 7_000
         var lastEdid: Int? = null
         var lastInputMode: Int? = null
-        var inputModeResent = false
+        var inputModeWriteCount = 0
+        var inputModeWriteConfirmed = false
         while (SystemClock.elapsedRealtime() < deadline) {
             lastEdid = readDpEdid(reportFailure = false)
             lastInputMode = readDpInputMode(reportFailure = false)
             if (lastEdid == expectedEdid && lastInputMode == expectedInputMode) return true
-            if (lastEdid == expectedEdid && lastInputMode != expectedInputMode && !inputModeResent) {
-                inputModeResent = true
-                status("${model.displayName} EDID 已到位但 input=$lastInputMode，补发 input=$expectedInputMode")
-                writeDpInputMode(expectedInputMode)
+            if (lastEdid == expectedEdid && lastInputMode != expectedInputMode &&
+                inputModeWriteCount < displayModeProtocol.inputModeWriteAttempts
+            ) {
+                inputModeWriteCount += 1
+                status(
+                    "${model.displayName} EDID 已到位但 input=$lastInputMode，补发 input=$expectedInputMode" +
+                        " ($inputModeWriteCount/${displayModeProtocol.inputModeWriteAttempts})",
+                )
+                inputModeWriteConfirmed = writeDpInputMode(expectedInputMode) || inputModeWriteConfirmed
+                if (!displayModeProtocol.requireInputModeReadback && inputModeWriteConfirmed &&
+                    inputModeWriteCount >= displayModeProtocol.inputModeWriteAttempts
+                ) {
+                    Thread.sleep(500)
+                    lastEdid = readDpEdid(reportFailure = false)
+                    if (lastEdid == expectedEdid) {
+                        status("${model.displayName} EDID 已验证，inputMode 已补发；跳过不稳定 input 读回")
+                        return true
+                    }
+                }
             }
             Thread.sleep(500)
         }
         lastEdid = lastEdid ?: readDpEdid(reportFailure = true)
         lastInputMode = lastInputMode ?: readDpInputMode(reportFailure = true)
+        if (!displayModeProtocol.requireInputModeReadback && lastEdid == expectedEdid && inputModeWriteConfirmed) {
+            status("${model.displayName} EDID 已验证，inputMode 已补发；跳过不稳定 input 读回")
+            return true
+        }
         status("${model.displayName} DP 状态未达预期：期望 EDID=$expectedEdid/input=$expectedInputMode，读回 EDID=$lastEdid/input=$lastInputMode")
         return false
     }

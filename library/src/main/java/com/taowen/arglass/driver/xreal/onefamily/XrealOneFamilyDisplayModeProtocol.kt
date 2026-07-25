@@ -13,6 +13,8 @@ internal data class XrealOneDisplayProfileEntry(
 
 internal interface XrealOneDpDisplayModeProtocol {
     val profiles: List<GlassesDisplayProfile>
+    val requireInputModeReadback: Boolean get() = true
+    val inputModeWriteAttempts: Int get() = 1
     fun decode(edid: Int): DisplayMode?
     fun decodeProfile(edid: Int): GlassesDisplayProfile?
     fun encode(mode: DisplayMode): XrealOneDisplayModeCommand?
