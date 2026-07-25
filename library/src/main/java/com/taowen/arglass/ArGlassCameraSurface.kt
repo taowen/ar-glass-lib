@@ -10,6 +10,8 @@ import android.media.MediaFormat
 import android.view.Surface
 import java.io.Closeable
 import java.nio.ByteBuffer
+import java.util.ArrayDeque
+import java.util.LinkedHashSet
 import java.util.concurrent.atomic.AtomicBoolean
 
 class ArGlassCameraSurfaceOptions @JvmOverloads constructor(
@@ -109,6 +111,25 @@ object ArGlassCameraSurfaceWriters {
 
     @JvmStatic
     @JvmOverloads
+    fun sharedFactory(
+        context: Context,
+        source: ArGlassCameraSource = ArGlassCameraSource.BEST,
+        options: ArGlassCameraSurfaceOptions = ArGlassCameraSurfaceOptions(),
+        listener: ArGlassCameraSurfaceStatusListener? = null,
+    ): ArGlassCameraSurfaceWriterFactory =
+        SharedFactory(context.applicationContext, source, options, listener)
+
+    @JvmStatic
+    @JvmOverloads
+    fun sharedBestFactory(
+        context: Context,
+        options: ArGlassCameraSurfaceOptions = ArGlassCameraSurfaceOptions(),
+        listener: ArGlassCameraSurfaceStatusListener? = null,
+    ): ArGlassCameraSurfaceWriterFactory =
+        sharedFactory(context, ArGlassCameraSource.BEST, options, listener)
+
+    @JvmStatic
+    @JvmOverloads
     fun start(
         context: Context,
         surface: Surface,
@@ -192,18 +213,279 @@ object ArGlassCameraSurfaceWriters {
         reader?.let { SurfaceWriter(surface, it, options, listener) }
 
     private class SurfaceWriter(
-        private val surface: Surface,
+        surface: Surface,
         private val reader: ArGlassCameraFrameReader,
         private val options: ArGlassCameraSurfaceOptions,
         private val listener: ArGlassCameraSurfaceStatusListener?,
     ) : ArGlassCameraSurfaceWriter {
         override val sourceName: String = reader.name
+        private val renderer = SurfaceFrameRenderer(surface, sourceName, options.statusIntervalMs, listener)
+        private var emptyReads = 0
+
+        override fun writeFrame(): Boolean {
+            renderer.drainPending()
+            val frame = reader.readFrame()
+            if (frame == null) {
+                emptyReads += 1
+                renderer.emitStatus("等待摄像头帧", force = false)
+                return options.maxEmptyReads <= 0 || emptyReads < options.maxEmptyReads
+            }
+            emptyReads = 0
+            return renderer.render(frame)
+        }
+
+        override fun close() {
+            try {
+                renderer.close()
+            } finally {
+                runCatching { reader.close() }
+            }
+        }
+    }
+
+    private class SharedFactory(
+        private val context: Context,
+        private val source: ArGlassCameraSource,
+        private val options: ArGlassCameraSurfaceOptions,
+        private val listener: ArGlassCameraSurfaceStatusListener?,
+    ) : ArGlassCameraSurfaceWriterFactory {
+        private val hub = SharedFrameHub(context, source, options, listener)
+
+        override fun open(surface: Surface): ArGlassCameraSurfaceWriter? =
+            hub.open(surface)
+    }
+
+    private class SharedFrameHub(
+        private val context: Context,
+        private val source: ArGlassCameraSource,
+        private val options: ArGlassCameraSurfaceOptions,
+        private val listener: ArGlassCameraSurfaceStatusListener?,
+    ) {
+        private val lock = Object()
+        private val sinks = LinkedHashSet<SharedSurfaceWriter>()
+        private var reader: ArGlassCameraFrameReader? = null
+        private var thread: Thread? = null
+        private var sourceName: String? = null
+        private var lastCodecConfig: ArGlassCameraFrame? = null
+        private var emptyReads = 0
+        private var framesRead = 0L
+        private var framesRendered = 0L
+        private var codecConfigFrames = 0L
+        private var keyFrames = 0L
+        private var bytesRead = 0L
+        private var lastFrameBytes = 0
+        private var lastStatusAtMs = 0L
+
+        fun open(surface: Surface): ArGlassCameraSurfaceWriter? {
+            if (!surface.isValid) return null
+            synchronized(lock) {
+                val activeReader = reader ?: openReader(context, source)?.also { opened ->
+                    reader = opened
+                    sourceName = opened.name
+                    emitStatusLocked("已打开摄像头", force = true, detail = null)
+                } ?: run {
+                    emitStatusLocked(
+                        "没有可用摄像头",
+                        force = true,
+                        detail = ArGlassCameraFrameReaders.describeAvailability(context),
+                    )
+                    return null
+                }
+                val writer = SharedSurfaceWriter(
+                    surface = surface,
+                    sourceName = activeReader.name,
+                    hub = this,
+                    statusIntervalMs = options.statusIntervalMs,
+                    listener = listener,
+                )
+                lastCodecConfig?.let(writer::offer)
+                sinks.add(writer)
+                if (thread == null) {
+                    thread = Thread({ readLoop(activeReader) }, "ArGlassCameraFrameHub").also {
+                        it.start()
+                    }
+                }
+                return writer
+            }
+        }
+
+        fun unregister(writer: SharedSurfaceWriter) {
+            val closeReader: ArGlassCameraFrameReader?
+            synchronized(lock) {
+                sinks.remove(writer)
+                closeReader = if (sinks.isEmpty()) {
+                    val activeReader = reader
+                    reader = null
+                    thread = null
+                    sourceName = null
+                    lastCodecConfig = null
+                    activeReader
+                } else {
+                    null
+                }
+            }
+            runCatching { closeReader?.close() }
+        }
+
+        fun onSinkRendered() {
+            synchronized(lock) {
+                framesRendered += 1
+            }
+        }
+
+        private fun readLoop(activeReader: ArGlassCameraFrameReader) {
+            try {
+                while (true) {
+                    synchronized(lock) {
+                        if (reader !== activeReader || sinks.isEmpty()) return
+                    }
+                    val frame = activeReader.readFrame()
+                    if (frame == null) {
+                        val shouldStop = synchronized(lock) {
+                            emptyReads += 1
+                            emitStatusLocked("等待摄像头帧", force = false, detail = null)
+                            options.maxEmptyReads > 0 && emptyReads >= options.maxEmptyReads
+                        }
+                        if (shouldStop) return
+                        continue
+                    }
+                    val targets = synchronized(lock) {
+                        emptyReads = 0
+                        framesRead += 1
+                        lastFrameBytes = frame.bytes.size
+                        bytesRead += lastFrameBytes.toLong()
+                        if (frame.codecConfig) {
+                            codecConfigFrames += 1
+                            lastCodecConfig = frame
+                        }
+                        if (frame.keyFrame) keyFrames += 1
+                        sinks.toList()
+                    }
+                    targets.forEach { it.offer(frame) }
+                }
+            } catch (error: Throwable) {
+                synchronized(lock) {
+                    emitStatusLocked("摄像头读取失败", force = true, detail = error.surfaceMessageChain())
+                }
+            } finally {
+                finish(activeReader)
+            }
+        }
+
+        private fun finish(activeReader: ArGlassCameraFrameReader) {
+            val closedSinks: List<SharedSurfaceWriter>
+            synchronized(lock) {
+                if (reader !== activeReader) return
+                reader = null
+                thread = null
+                sourceName = null
+                lastCodecConfig = null
+                closedSinks = sinks.toList()
+                sinks.clear()
+            }
+            runCatching { activeReader.close() }
+            closedSinks.forEach { it.markSourceClosed() }
+        }
+
+        private fun emitStatusLocked(phase: String, force: Boolean, detail: String?) {
+            val callback = listener ?: return
+            val now = System.currentTimeMillis()
+            if (!force && now - lastStatusAtMs < options.statusIntervalMs) return
+            lastStatusAtMs = now
+            callback.onStatus(
+                ArGlassCameraSurfaceStatus(
+                    phase = phase,
+                    sourceName = sourceName,
+                    framesRead = framesRead,
+                    framesRendered = framesRendered,
+                    codecConfigFrames = codecConfigFrames,
+                    keyFrames = keyFrames,
+                    bytesRead = bytesRead,
+                    lastFrameBytes = lastFrameBytes,
+                    detail = detail,
+                ),
+            )
+        }
+    }
+
+    private class SharedSurfaceWriter(
+        private val surface: Surface,
+        override val sourceName: String,
+        private val hub: SharedFrameHub,
+        statusIntervalMs: Long,
+        listener: ArGlassCameraSurfaceStatusListener?,
+    ) : ArGlassCameraSurfaceWriter {
+        private val lock = Object()
+        private val queue = ArrayDeque<ArGlassCameraFrame>()
+        private val renderer = SurfaceFrameRenderer(surface, sourceName, statusIntervalMs, listener) {
+            hub.onSinkRendered()
+        }
+        private var closed = false
+        private var sourceClosed = false
+
+        fun offer(frame: ArGlassCameraFrame) {
+            synchronized(lock) {
+                if (closed || sourceClosed) return
+                if (frame.codecConfig) {
+                    queue.clear()
+                }
+                while (queue.size >= SHARED_SURFACE_QUEUE_SIZE) {
+                    queue.removeFirst()
+                }
+                queue.addLast(frame)
+                lock.notifyAll()
+            }
+        }
+
+        fun markSourceClosed() {
+            synchronized(lock) {
+                sourceClosed = true
+                lock.notifyAll()
+            }
+        }
+
+        override fun writeFrame(): Boolean {
+            renderer.drainPending()
+            val frame = synchronized(lock) {
+                while (queue.isEmpty() && !closed && !sourceClosed) {
+                    lock.wait(SHARED_SURFACE_WAIT_MS)
+                    if (queue.isEmpty() && !closed && !sourceClosed) {
+                        return true
+                    }
+                }
+                if (closed) return false
+                if (queue.isEmpty()) return !sourceClosed
+                queue.removeFirst()
+            }
+            return renderer.render(frame)
+        }
+
+        override fun close() {
+            try {
+                synchronized(lock) {
+                    closed = true
+                    queue.clear()
+                    lock.notifyAll()
+                }
+                hub.unregister(this)
+            } finally {
+                renderer.close()
+            }
+        }
+    }
+
+    private class SurfaceFrameRenderer(
+        private val surface: Surface,
+        private val sourceName: String,
+        private val statusIntervalMs: Long,
+        private val listener: ArGlassCameraSurfaceStatusListener?,
+        private val onRendered: (() -> Unit)? = null,
+    ) : Closeable {
         private val bufferInfo = MediaCodec.BufferInfo()
         private val jpegOptions = BitmapFactory.Options()
         private var hevcDecoder: MediaCodec? = null
         private var reusableJpegBitmap: Bitmap? = null
         private var startedOnKeyFrame = false
-        private var emptyReads = 0
         private var presentationTimeUs = 0L
         private var framesRead = 0L
         private var framesRendered = 0L
@@ -213,15 +495,11 @@ object ArGlassCameraSurfaceWriters {
         private var lastFrameBytes = 0
         private var lastStatusAtMs = 0L
 
-        override fun writeFrame(): Boolean {
+        fun drainPending() {
             drainHevcDecoder()
-            val frame = reader.readFrame()
-            if (frame == null) {
-                emptyReads += 1
-                emitStatus("等待摄像头帧", force = false)
-                return options.maxEmptyReads <= 0 || emptyReads < options.maxEmptyReads
-            }
-            emptyReads = 0
+        }
+
+        fun render(frame: ArGlassCameraFrame): Boolean {
             framesRead += 1
             lastFrameBytes = frame.bytes.size
             bytesRead += lastFrameBytes.toLong()
@@ -231,15 +509,6 @@ object ArGlassCameraSurfaceWriters {
                 ArGlassCameraFrame.FORMAT_JPEG -> writeJpeg(frame.bytes)
                 ArGlassCameraFrame.FORMAT_HEVC_ANNEX_B -> writeHevc(frame)
                 else -> false
-            }
-        }
-
-        override fun close() {
-            try {
-                closeHevcDecoder()
-            } finally {
-                recycleReusableBitmap()
-                runCatching { reader.close() }
             }
         }
 
@@ -254,6 +523,7 @@ object ArGlassCameraSurfaceWriters {
                 surface.unlockCanvasAndPost(canvas)
                 canvas = null
                 framesRendered += 1
+                onRendered?.invoke()
                 emitStatus("显示中", force = false)
                 true
             } finally {
@@ -350,7 +620,10 @@ object ArGlassCameraSurfaceWriters {
                     MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
                     else -> if (outputIndex >= 0) {
                         decoder.releaseOutputBuffer(outputIndex, bufferInfo.size > 0)
-                        if (bufferInfo.size > 0) framesRendered += 1
+                        if (bufferInfo.size > 0) {
+                            framesRendered += 1
+                            onRendered?.invoke()
+                        }
                     }
                 }
             }
@@ -371,10 +644,10 @@ object ArGlassCameraSurfaceWriters {
             }
         }
 
-        private fun emitStatus(phase: String, force: Boolean) {
+        fun emitStatus(phase: String, force: Boolean) {
             val callback = listener ?: return
             val now = System.currentTimeMillis()
-            if (!force && now - lastStatusAtMs < options.statusIntervalMs) return
+            if (!force && now - lastStatusAtMs < statusIntervalMs) return
             lastStatusAtMs = now
             callback.onStatus(
                 ArGlassCameraSurfaceStatus(
@@ -390,10 +663,37 @@ object ArGlassCameraSurfaceWriters {
                 ),
             )
         }
+
+        override fun close() {
+            closeHevcDecoder()
+            recycleReusableBitmap()
+        }
+    }
+
+    private fun openReader(context: Context, source: ArGlassCameraSource): ArGlassCameraFrameReader? =
+        when (source) {
+            ArGlassCameraSource.BEST ->
+                ArGlassCameraFrameReaders.openXrealOneEye(context)
+                    ?: ArGlassCameraFrameReaders.openBeastUvcOrThrow(context)
+            ArGlassCameraSource.XREAL_ONE_EYE ->
+                ArGlassCameraFrameReaders.openXrealOneEye(context)
+            ArGlassCameraSource.BEAST ->
+                ArGlassCameraFrameReaders.openBeastUvcOrThrow(context)
+        }
+
+    private fun Throwable.surfaceMessageChain(): String {
+        val messages = generateSequence(this) { it.cause }
+            .map { it.message ?: it.javaClass.simpleName }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" <- ")
+        return messages.ifBlank { javaClass.simpleName }
     }
 
     private const val HEVC_MAX_INPUT_SIZE = 2_000_000
     private const val CODEC_DEQUEUE_TIMEOUT_US = 10_000L
+    private const val SHARED_SURFACE_QUEUE_SIZE = 4
+    private const val SHARED_SURFACE_WAIT_MS = 100L
 }
 
 class ArGlassCameraSurfaceStream internal constructor(
