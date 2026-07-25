@@ -54,6 +54,48 @@ object ArGlassCameraFrameReaders {
             ?: openBeastUvc(usbManager, devices)
     }
 
+    @JvmStatic
+    fun openXrealOneEye(context: Context): ArGlassCameraFrameReader? {
+        val appContext = context.applicationContext
+        val usbManager = appContext.getSystemService(UsbManager::class.java) ?: return null
+        val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
+        return openXrealOneEye(connectivityManager, usbManager.deviceList.values.toList())
+    }
+
+    @JvmStatic
+    fun openBeastUvc(context: Context): ArGlassCameraFrameReader? {
+        val appContext = context.applicationContext
+        val usbManager = appContext.getSystemService(UsbManager::class.java) ?: return null
+        return openBeastUvc(usbManager, usbManager.deviceList.values.toList())
+    }
+
+    @JvmStatic
+    fun describeAvailability(context: Context): String {
+        val appContext = context.applicationContext
+        val usbManager = appContext.getSystemService(UsbManager::class.java)
+            ?: return "当前设备不支持 USB host，无法发现 XREAL Eye 或 Beast 摄像头。"
+        val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
+        val devices = usbManager.deviceList.values.toList()
+        val visible = devices.joinToString { "0x%04x:0x%04x".format(it.vendorId, it.productId) }
+            .ifBlank { "无" }
+        val xrealMain = devices.firstOrNull(XrealEyeCameraCatalog::identifyOneFamilyMain)
+        val xrealNetworkReady = connectivityManager?.let(XrealOneNcmTransport::findNetwork) != null
+        val beast = devices.firstOrNull(BeastCameraCatalog::identify)
+        val beastPermission = beast?.let(usbManager::hasPermission) == true
+        return buildString {
+            append("可见 USB：").append(visible)
+            append("\nXREAL One 主设备：").append(if (xrealMain != null) "已发现" else "未发现")
+            append("\nXREAL Eye USB Ethernet：").append(if (xrealNetworkReady) "已就绪" else "未就绪")
+            append("\nBeast UVC：").append(
+                when {
+                    beast == null -> "未发现"
+                    beastPermission -> "已授权"
+                    else -> "已发现但 Arctrl 未获得 USB 权限"
+                }
+            )
+        }
+    }
+
     private fun openXrealOneEye(
         connectivityManager: ConnectivityManager?,
         devices: List<UsbDevice>,
