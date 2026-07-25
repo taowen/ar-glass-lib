@@ -272,6 +272,12 @@ where the transport is native-backed.
   not. The One hardware capture is the current direct evidence for EDID 5/9;
   additional per-model EDID profiles should be added only after model-specific
   hardware captures or open-driver evidence.
+- The standalone check APK includes a read-only "XREAL One EDID/input" activity.
+  Users can first switch the glasses to a desired state with vendor tools or the
+  glasses UI, for example `3840x1080@60` Full SBS 3D, then read the current
+  `EDID` and `inputMode` values and send them to developers. Those captures are
+  the intended path for adding model-specific EDID mappings that are not already
+  verified.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
 - The JNI TCP reader follows XRLinuxDriver's vendored `xreal_one_driver`: find
   header `28 36 00 00 00 80`, require marker `00 40 1F 00 00 40`, reassemble

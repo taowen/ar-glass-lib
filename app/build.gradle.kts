@@ -9,8 +9,8 @@ android {
         applicationId = "com.taowen.arglass.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10007
-        versionName = "1.0.7"
+        versionCode = 10008
+        versionName = "1.0.8"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
