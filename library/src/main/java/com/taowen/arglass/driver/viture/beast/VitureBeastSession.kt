@@ -6,7 +6,7 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
@@ -58,28 +58,28 @@ internal class VitureBeastSession(
     }
 
     @Synchronized
-    override fun queryDisplayMode(): DisplayMode? {
+    override fun queryDisplayProfile(): GlassesDisplayProfile? {
         val nativeMode = queryNativeMode() ?: return null
         displayModeValue = null
         val query = if (nativeMode) VitureBeastProtocol.GET_NATIVE_DISPLAY_MODE else VitureBeastProtocol.GET_BYPASS_DISPLAY_MODE
         if (!send(VitureBeastProtocol.command(query)) || !awaitResponse { displayModeValue != null }) return null
         val value = displayModeValue
-        val mode = when (value) {
-            VitureBeastProtocol.MODE_2D_1080_60HZ -> DisplayMode.MIRROR_2D
-            VitureBeastProtocol.NATIVE_MODE_3D_SBS_1080_60HZ -> if (nativeMode) DisplayMode.FULL_SBS_3D else null
-            VitureBeastProtocol.BYPASS_MODE_3D_SBS_1080_60HZ -> if (!nativeMode) DisplayMode.FULL_SBS_3D else null
+        val profile = when (value) {
+            VitureBeastProtocol.MODE_2D_1080_60HZ -> VitureBeastProtocol.twoDimensionalProfile
+            VitureBeastProtocol.NATIVE_MODE_3D_SBS_1080_60HZ -> if (nativeMode) VitureBeastProtocol.fullSbs3dProfile else null
+            VitureBeastProtocol.BYPASS_MODE_3D_SBS_1080_60HZ -> if (!nativeMode) VitureBeastProtocol.fullSbs3dProfile else null
             else -> null
         }
-        status("Beast 工作模式：${if (nativeMode) "Native" else "Bypass"}；显示：${mode?.let { if (it == DisplayMode.MIRROR_2D) "2D" else "3D" } ?: "未知(0x${value?.toString(16)})"}")
-        return mode
+        status("Beast 工作模式：${if (nativeMode) "Native" else "Bypass"}；显示：${profile?.let { if (it.is3d) "3D" else "2D" } ?: "未知(0x${value?.toString(16)})"}")
+        return profile
     }
 
     @Synchronized
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
+    override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
         val nativeMode = queryNativeMode() ?: return false
-        val value = when (mode) {
-            DisplayMode.MIRROR_2D -> VitureBeastProtocol.MODE_2D_1080_60HZ
-            DisplayMode.FULL_SBS_3D -> if (nativeMode) {
+        val value = when (profile.id) {
+            VitureBeastProtocol.twoDimensionalProfile.id -> VitureBeastProtocol.MODE_2D_1080_60HZ
+            VitureBeastProtocol.fullSbs3dProfile.id -> if (nativeMode) {
                 VitureBeastProtocol.NATIVE_MODE_3D_SBS_1080_60HZ
             } else {
                 VitureBeastProtocol.BYPASS_MODE_3D_SBS_1080_60HZ

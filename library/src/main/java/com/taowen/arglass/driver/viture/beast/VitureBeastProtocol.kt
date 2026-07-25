@@ -1,5 +1,7 @@
 package com.taowen.arglass.driver.viture.beast
 
+import com.taowen.arglass.GlassesDisplayLayout
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.ImuSample
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -19,6 +21,21 @@ internal object VitureBeastProtocol {
     const val MODE_2D_1080_60HZ = 0x31
     const val BYPASS_MODE_3D_SBS_1080_60HZ = 0x32
     const val NATIVE_MODE_3D_SBS_1080_60HZ = 0x37
+    val twoDimensionalProfile = GlassesDisplayProfile(
+        "viture_beast_mode_2d_1920_1080_60",
+        1920,
+        1080,
+        60,
+        GlassesDisplayLayout.MONO_2D,
+    )
+    val fullSbs3dProfile = GlassesDisplayProfile(
+        "viture_beast_mode_full_sbs_3840_1080_60",
+        3840,
+        1080,
+        60,
+        GlassesDisplayLayout.FULL_SBS_3D,
+    )
+    val displayProfiles = listOf(twoDimensionalProfile, fullSbs3dProfile)
 
     data class Packet(val messageId: Int, val payload: ByteArray)
 

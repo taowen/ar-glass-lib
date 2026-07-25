@@ -6,7 +6,6 @@ import android.net.ConnectivityManager
 import android.os.SystemClock
 import android.util.Log
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
@@ -38,19 +37,6 @@ internal class XrealOneFamilySession(
 
     init { imuThread?.start() }
 
-    override fun queryDisplayMode(): DisplayMode? {
-        if (!displayEnabled) {
-            status("${model.displayName} 未声明 2D/3D 切换能力")
-            return null
-        }
-        return readDpEdid()?.let { edid ->
-            val inputMode = readDpInputMode(reportFailure = false)
-            displayModeProtocol.decode(edid).also { mode ->
-                status("${model.displayName} DP EDID=$edid，input=$inputMode，显示模式=${mode?.name ?: "未知"}")
-            }
-        }
-    }
-
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         if (!displayEnabled) {
             status("${model.displayName} 未声明 2D/3D 切换能力")
@@ -62,39 +48,6 @@ internal class XrealOneFamilySession(
                 status("${model.displayName} DP EDID=$edid，input=$inputMode，显示 profile=${profile?.let(::profileLabel) ?: "未知"}")
             }
         }
-    }
-
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
-        if (!displayEnabled) {
-            status("${model.displayName} 未声明 2D/3D 切换能力")
-            return false
-        }
-        val command = displayModeProtocol.encode(mode)
-        if (command == null) {
-            status("${model.displayName} 未开放 ${mode.name} 切换；仅真机验证 2D 与 Full SBS 3D")
-            return false
-        }
-        val transportOk = runCatching {
-            XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
-                NativeBridge.xrealOneDpSetDisplayMode(
-                    XrealOneNcmTransport.GLASSES_HOST,
-                    XrealOneNcmTransport.CONTROL_PORT,
-                    command.edid,
-                    command.inputMode,
-                    2_000,
-                    1_200,
-                )
-            }
-        }.onFailure { error ->
-            status("${model.displayName} DP ACK 未完成，继续读回 EDID/input 验证：${error.message}")
-        }.getOrDefault(false)
-        val verified = verifyDpState(command.edid, command.inputMode)
-        if (verified) {
-            status("${model.displayName} 已切换 DP 模式：${mode.name}，EDID=${command.edid}, input=${command.inputMode}, ack=$transportOk")
-        } else {
-            status("${model.displayName} DP 模式切换未验证成功：${mode.name}")
-        }
-        return verified
     }
 
     override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {

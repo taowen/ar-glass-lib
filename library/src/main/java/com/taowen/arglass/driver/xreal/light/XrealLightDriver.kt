@@ -2,8 +2,12 @@ package com.taowen.arglass.driver.xreal.light
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import com.taowen.arglass.*
-import com.taowen.arglass.driver.*
+import com.taowen.arglass.ArGlassesListener
+import com.taowen.arglass.GlassesCapability
+import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.SessionFeature
+import com.taowen.arglass.driver.CompositeGlassesDriver
+import com.taowen.arglass.driver.DriverSession
 import java.util.concurrent.Executor
 
 internal object XrealLightDriver : CompositeGlassesDriver {
@@ -12,7 +16,11 @@ internal object XrealLightDriver : CompositeGlassesDriver {
         if (device.vendorId == 0x0486 && device.productId == 0x573c) GlassesModel(
             id, "XREAL", "Light", device.vendorId, device.productId,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-            setOf(DisplayMode.MIRROR_2D, DisplayMode.HALF_SBS_3D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D), id,
+            id,
+            supportedDisplayProfiles = XrealLightProtocol.displayProfiles,
+            preferred2dDisplayProfile = XrealLightProtocol.twoDimensionalProfile,
+            preferred3dDisplayProfile = XrealLightProtocol.fullSbs3dProfile,
+            showInArctrlDisplayModeToggle = true,
         ) else null
 
     override fun companionDevices(allDevices: Collection<UsbDevice>, primary: UsbDevice) =

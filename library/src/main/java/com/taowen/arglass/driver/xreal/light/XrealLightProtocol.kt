@@ -1,26 +1,71 @@
 package com.taowen.arglass.driver.xreal.light
 
-import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayLayout
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.ImuSample
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.Adler32
 
 internal object XrealLightProtocol {
+    private data class Entry(val wireValue: Char, val profile: GlassesDisplayProfile)
+
+    val twoDimensionalProfile = GlassesDisplayProfile(
+        id = "xreal_light_mode_1",
+        width = 1920,
+        height = 1080,
+        refreshRateHz = 60,
+        layout = GlassesDisplayLayout.MONO_2D,
+    )
+    val fullSbs3dProfile = GlassesDisplayProfile(
+        id = "xreal_light_mode_3",
+        width = 3840,
+        height = 1080,
+        refreshRateHz = 60,
+        layout = GlassesDisplayLayout.FULL_SBS_3D,
+    )
+
+    private val profileEntries = listOf(
+        Entry('1', twoDimensionalProfile),
+        Entry(
+            '2',
+            GlassesDisplayProfile(
+                id = "xreal_light_mode_2",
+                width = 1920,
+                height = 1080,
+                refreshRateHz = 60,
+                layout = GlassesDisplayLayout.HALF_SBS_3D,
+            ),
+        ),
+        Entry('3', fullSbs3dProfile),
+        Entry(
+            '4',
+            GlassesDisplayProfile(
+                id = "xreal_light_mode_4",
+                width = 3840,
+                height = 1080,
+                refreshRateHz = 72,
+                layout = GlassesDisplayLayout.FULL_SBS_3D,
+            ),
+        ),
+    )
+    val displayProfiles: List<GlassesDisplayProfile> = profileEntries.map(Entry::profile)
+
     fun mcu(category: Char, command: Char, data: String = "x"): ByteArray {
         val prefix = "\u0002:$category:$command:$data:0:".encodeToByteArray()
         val crc = Adler32().apply { update(prefix) }.value.toString(16).padStart(8, ' ')
         return ByteArray(64).also { (prefix + crc.encodeToByteArray() + byteArrayOf(':'.code.toByte(), 3)).copyInto(it) }
     }
-    fun decodeMode(packet: ByteArray): DisplayMode? {
+
+    fun decodeProfile(packet: ByteArray): GlassesDisplayProfile? {
         val end = packet.indexOf(3).takeIf { it > 0 } ?: return null
         val parts = packet.copyOfRange(1, end).decodeToString().split(':')
         val value = parts.getOrNull(3)?.firstOrNull()
-        return when (value) { '1' -> DisplayMode.MIRROR_2D; '2' -> DisplayMode.HALF_SBS_3D
-            '3' -> DisplayMode.FULL_SBS_3D; '4' -> DisplayMode.HIGH_REFRESH_SBS_3D; else -> null }
+        return profileEntries.firstOrNull { it.wireValue == value }?.profile
     }
-    fun wire(mode: DisplayMode) = when (mode) { DisplayMode.MIRROR_2D -> '1'; DisplayMode.HALF_SBS_3D -> '2'
-        DisplayMode.FULL_SBS_3D -> '3'; DisplayMode.HIGH_REFRESH_SBS_3D -> '4' }
+
+    fun wire(profile: GlassesDisplayProfile): Char? =
+        profileEntries.firstOrNull { it.profile.id == profile.id }?.wireValue
 
     fun decodeImu(bytes: ByteArray): ImuSample? {
         if (bytes.size < 108 || bytes[0].toInt() != 1) return null

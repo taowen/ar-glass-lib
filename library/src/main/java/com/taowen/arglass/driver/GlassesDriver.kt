@@ -4,7 +4,6 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
@@ -73,8 +72,6 @@ internal interface CompositeGlassesDriver : GlassesDriver {
 }
 
 internal interface DriverSession : Closeable {
-    fun queryDisplayMode(): DisplayMode? = error("Display-mode query is not supported")
-    fun setDisplayMode(mode: DisplayMode): Boolean = error("Display-mode control is not supported")
     fun queryDisplayProfile(): GlassesDisplayProfile? = null
     fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean =
         error("Display profile control is not supported")

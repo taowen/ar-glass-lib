@@ -2,6 +2,15 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
     <uses-permission android:name="android.permission.CAMERA" />
     <application android:name=".CheckApplication" android:theme="@style/AppTheme" android:label="AR Glass Check">
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
         <activity android:name=".ImuCheckActivity" android:exported="false" />
         <activity android:name=".DisplayModeCheckActivity" android:exported="false" />
         <activity android:name=".DisplayProfileSwitchActivity" android:exported="false" />

@@ -4,7 +4,6 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.SystemClock
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
@@ -60,25 +59,11 @@ internal class XrealXbxSession(
         status("${model.displayName} MCU 和 SDK 3.1.1 握手完成")
     }
 
-    override fun queryDisplayMode(): DisplayMode? {
-        check(displayEnabled) { "This session was not opened for display-mode control" }
-        ensureMcuReady()
-        val value = usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 } ?: return null
-        return displayModeProtocol.decode(value)
-    }
-
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         ensureMcuReady()
         val value = usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 } ?: return null
         return displayModeProtocol.decodeProfile(value)
-    }
-
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
-        check(displayEnabled) { "This session was not opened for display-mode control" }
-        ensureMcuReady()
-        val helenMode = displayModeProtocol.encode(mode)
-        return setDisplayModeValue(helenMode)
     }
 
     override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {

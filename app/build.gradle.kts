@@ -18,4 +18,7 @@ android {
     }
 }
 
-dependencies { implementation(project(":library")) }
+dependencies {
+    implementation(project(":library"))
+    implementation("androidx.core:core:1.13.1")
+}

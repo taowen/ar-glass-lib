@@ -4,7 +4,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
@@ -22,8 +22,11 @@ internal object XrealOneDriver : GlassesDriver {
         GlassesModel(
             id, "XREAL", "One", VID, PID,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION, GlassesCapability.CAMERA),
-            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D), id,
+            id,
             supportedDisplayProfiles = XrealOneDisplayModeProtocol.profiles,
+            preferred2dDisplayProfile = XrealOneDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
+            preferred3dDisplayProfile = XrealOneDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
+            showInArctrlDisplayModeToggle = false,
         )
     } else null
 

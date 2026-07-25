@@ -3,7 +3,7 @@ package com.taowen.arglass.driver.luci
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.NativeUsbDeviceSession
 import java.util.concurrent.atomic.AtomicBoolean
@@ -22,10 +22,10 @@ internal class LuciDisplaySession(
         check(usb.claim(hidInterface)) { "Cannot claim LUCI HID interface ${hidInterface.id}" }
     }
 
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
-        val enable3d = when (mode) {
-            DisplayMode.MIRROR_2D -> false
-            DisplayMode.FULL_SBS_3D -> true
+    override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        val enable3d = when (profile.id) {
+            LuciDriver.twoDimensionalProfile.id -> false
+            LuciDriver.fullSbs3dProfile.id -> true
             else -> return false
         }
         val report = LuciDisplayProtocol.powerStateReport(enable3d)

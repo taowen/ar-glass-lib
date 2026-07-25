@@ -1,12 +1,20 @@
 package com.taowen.arglass.driver.rokid.air
 
-import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayLayout
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.ImuSample
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 internal object RokidProtocol {
     const val INTERRUPT_ENDPOINT = 0x82
+    private const val DISPLAY_2D = 0
+    private const val DISPLAY_FULL_SBS_3D = 1
+    private const val DISPLAY_HIGH_REFRESH_3D = 4
+    val twoDimensionalProfile = profile(DISPLAY_2D, 1920, 1080, 60, GlassesDisplayLayout.MONO_2D)
+    val fullSbs3dProfile = profile(DISPLAY_FULL_SBS_3D, 3840, 1080, 60, GlassesDisplayLayout.FULL_SBS_3D)
+    val highRefresh3dProfile = profile(DISPLAY_HIGH_REFRESH_3D, 3840, 1080, 90, GlassesDisplayLayout.FULL_SBS_3D)
+    val displayProfiles = listOf(twoDimensionalProfile, fullSbs3dProfile, highRefresh3dProfile)
 
     fun decodeCombined(bytes: ByteArray, length: Int): ImuSample? {
         if (length < 47 || bytes[0].toInt() and 0xff != 17) return null
@@ -33,20 +41,22 @@ internal object RokidProtocol {
         return SensorReading(type, buffer.getLong(9), vector)
     }
 
-    fun displayMode(value: Int): DisplayMode = when (value) {
-        0 -> DisplayMode.MIRROR_2D
-        1 -> DisplayMode.FULL_SBS_3D
-        2 -> DisplayMode.HALF_SBS_3D
-        4 -> DisplayMode.HIGH_REFRESH_SBS_3D
-        else -> DisplayMode.MIRROR_2D
+    fun displayProfile(value: Int): GlassesDisplayProfile? = when (value) {
+        DISPLAY_2D -> twoDimensionalProfile
+        DISPLAY_FULL_SBS_3D -> fullSbs3dProfile
+        DISPLAY_HIGH_REFRESH_3D -> highRefresh3dProfile
+        else -> null
     }
 
-    fun wireValue(mode: DisplayMode): Int? = when (mode) {
-        DisplayMode.MIRROR_2D -> 0
-        DisplayMode.FULL_SBS_3D -> 1
-        DisplayMode.HIGH_REFRESH_SBS_3D -> 4
-        DisplayMode.HALF_SBS_3D -> null
+    fun wireValue(profile: GlassesDisplayProfile): Int? = when (profile.id) {
+        twoDimensionalProfile.id -> DISPLAY_2D
+        fullSbs3dProfile.id -> DISPLAY_FULL_SBS_3D
+        highRefresh3dProfile.id -> DISPLAY_HIGH_REFRESH_3D
+        else -> null
     }
+
+    private fun profile(value: Int, width: Int, height: Int, refreshRateHz: Int, layout: GlassesDisplayLayout) =
+        GlassesDisplayProfile("rokid_display_mode_$value", width, height, refreshRateHz, layout)
 
     data class SensorReading(val type: Int, val timestamp: Long, val vector: FloatArray)
 }

@@ -1,6 +1,5 @@
 package com.taowen.arglass.driver.xreal
 
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesDisplayProfile
 
@@ -8,9 +7,7 @@ internal interface XrealMcuDisplayModeProtocol {
     val profiles: List<GlassesDisplayProfile>
     val queryPayloadBytes: Int
     val setPayloadBytes: Int
-    fun decode(value: Int): DisplayMode?
     fun decodeProfile(value: Int): GlassesDisplayProfile?
-    fun encode(mode: DisplayMode): Int
     fun encodeProfile(profile: GlassesDisplayProfile): Int?
     fun acceptsSetStatus(value: Int, status: Int): Boolean = status == 0
 }
@@ -27,7 +24,6 @@ internal fun xrealMcuDisplayProfile(
     height: Int,
     refreshRateHz: Int,
     layout: GlassesDisplayLayout,
-    compatibilityMode: DisplayMode,
 ) = XrealMcuDisplayProfileEntry(
     protocolValue,
     GlassesDisplayProfile(
@@ -36,6 +32,5 @@ internal fun xrealMcuDisplayProfile(
         height = height,
         refreshRateHz = refreshRateHz,
         layout = layout,
-        compatibilityMode = compatibilityMode,
     ),
 )

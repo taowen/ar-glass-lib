@@ -6,7 +6,7 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
+import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.SessionFeature
@@ -45,14 +45,14 @@ internal class RokidAirSession(
         }
     }
 
-    override fun queryDisplayMode(): DisplayMode? {
+    override fun queryDisplayProfile(): GlassesDisplayProfile? {
         val response = ByteArray(64)
         val length = usb.control(0xc0, 0x81, 0, 1, response, 500)
-        return if (length >= 2) RokidProtocol.displayMode(response[1].toInt() and 0xff) else null
+        return if (length >= 2) RokidProtocol.displayProfile(response[1].toInt() and 0xff) else null
     }
 
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
-        val value = RokidProtocol.wireValue(mode) ?: return false
+    override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        val value = RokidProtocol.wireValue(profile) ?: return false
         val payload = byteArrayOf(0)
         return usb.control(0x40, 0x01, value, 1, payload, 500) >= 0
     }

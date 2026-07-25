@@ -34,7 +34,7 @@ Supported models:
 The `library` module is the reusable API. The `app` module is an independently installable, framework-Views diagnostic UI that waits for glasses, identifies them, and lets the user run each check explicitly. Each check has its own Activity and implementation:
 
 - `ImuCheckActivity`: opens only the IMU interface and validates its stream.
-- `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
+- `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 2D/3D modes while model-specific commands remain isolated in their drivers.
 - `DisplayProfileSwitchActivity`: lists every verified glasses-native display profile declared by the current driver, shows `width × height @ refresh-rate` plus the 2D/3D layout, and switches by asking the driver to translate that common profile into its own protocol value.
 - `CameraCheckActivity`: appears only for VITURE Beast and previews the separately enumerated `0C45:6368` camera through direct UVC/libusb MJPEG capture.
 - `XrealEyeCameraCheckActivity`: appears for the XREAL One family and tests the open One + Eye USB Ethernet TCP/HEVC path (`169.254.2.1:52995`) without any vendor SO. XREAL Eye is not treated as UVC.
@@ -42,9 +42,10 @@ The `library` module is the reusable API. The `app` module is an independently i
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
 The standalone APK also has a **导出诊断 zip** action. There is only one export
-flow: the user picks a zip filename, and the app writes a multi-file diagnostic
-archive. Raw protocol captures are kept as separate binary files instead of
-being mixed into logcat:
+flow: the app writes a multi-file diagnostic archive into its cache and
+immediately opens Android's share sheet, matching Arctrl's long-press
+diagnostic sharing behavior. Raw protocol captures are kept as separate binary
+files instead of being mixed into logcat:
 
 - `diagnostics.txt`: generated summary with Android build information, visible
   USB devices and interfaces, recognized glasses, Android display modes, XREAL
@@ -70,6 +71,13 @@ For XREAL display profiles, each concrete model declares its own
 but model-level mode tables, preferred modes, payload widths, EDID mappings,
 and user-visible profile lists must stay in the concrete model's driver object
 so one XREAL product can diverge without changing another product.
+Each `GlassesModel` explicitly declares `preferred2dDisplayProfile`,
+`preferred3dDisplayProfile`, and `showInArctrlDisplayModeToggle`. The last field is
+only Arctrl home-screen UI policy for the 2D/3D toggle. It is intentionally
+separate from `DISPLAY_MODE` and `supportedDisplayProfiles`, so the standalone
+diagnostic APK can keep developer mode checks even when Arctrl should hide the
+product button. XREAL One, One Pro, and One S currently set this flag to
+`false`.
 
 When adding or correcting a glasses protocol, cross-check every available
 reference and prefer direct hardware captures or this repository's previously
@@ -129,7 +137,9 @@ val manager = ArGlassesManager(context, context.mainExecutor, listener)
 val connected = manager.scan().firstOrNull() ?: return
 if (!manager.hasPermission(connected.device)) manager.requestPermission(connected.device)
 val session = manager.open(connected.device)
-session.setDisplayMode(DisplayMode.FULL_SBS_3D)
+val in3d = session.isIn3d()
+session.switchTo3d()
+session.switchTo2d()
 val profile = connected.model.supportedDisplayProfiles.firstOrNull {
     it.width == 1920 && it.height == 1080 && it.refreshRateHz == 120
 }
@@ -206,8 +216,10 @@ unrelated glasses.
 - MCU: interface 0; IMU: interface 1.
 - IMU uses CRC32-protected `0xaa` control frames and 64-byte versioned reports.
 - Display modes use CRC32-protected `0xfd` MCU commands `0x07` (query) and `0x08` (set).
-- Generic `DisplayMode.wireValue` values are used only by drivers whose protocol
-  defines that mapping. Model-specific drivers translate to their native modes.
+- There is no public cross-model display-mode enum. Public 2D/3D control is
+  `isIn3d()`, `switchTo3d()`, and `switchTo2d()`. Model-specific drivers
+  translate their private mode, EDID, or inputMode values to declared display
+  profiles.
 
 Protocol behavior was adapted from the open-source `android-sensor-probe` project and its XREAL protocol research. Hardware behavior still needs validation on each firmware version.
 

@@ -5,7 +5,6 @@ import android.hardware.display.DisplayManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
-import android.net.Uri
 import android.os.Build
 import android.view.Display
 import com.taowen.arglass.driver.xreal.onefamily.XrealOneNcmTransport
@@ -13,6 +12,7 @@ import java.io.BufferedOutputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -106,33 +106,41 @@ object ArGlassesDiagnostics {
         recordEvent("uncaught crash thread=${thread.name} error=${error.javaClass.name}: ${error.message ?: ""}")
     }
 
-    fun exportZip(context: Context, targetUri: Uri): List<String> {
+    fun exportZipToCacheFile(context: Context): File {
         initialize(context)
-        recordEvent("export diagnostics zip uri=$targetUri")
+        val appContext = context.applicationContext
+        val shareDir = File(appContext.cacheDir, "shared").apply {
+            if (!isDirectory && !mkdirs()) throw IllegalStateException("Cannot create diagnostic share directory")
+        }
+        shareDir.listFiles { file -> file.name.startsWith("ar-glass-diagnostics-") && file.extension == "zip" }
+            ?.forEach { runCatching { it.delete() } }
+        val target = File(shareDir, defaultZipFileName())
+        recordEvent("export diagnostics zip file=${target.absolutePath}")
+        FileOutputStream(target).use { output -> writeZip(appContext, output) }
+        recordEvent("export diagnostics zip completed file=${target.name} entries=${exportFiles.joinToString()}")
+        return target
+    }
+
+    private fun writeZip(context: Context, output: OutputStream): List<String> {
         val appContext = context.applicationContext
         val dir = requireNotNull(directory)
         val generated = mapOf(
             SUMMARY_FILE to buildSummary(appContext),
             FORMAT_FILE to formatDescription(),
         )
-        val resolver = appContext.contentResolver
-        resolver.openOutputStream(targetUri, "w").use { output ->
-            requireNotNull(output) { "Cannot open diagnostic zip target" }
-            ZipOutputStream(BufferedOutputStream(output)).use { zip ->
-                exportFiles.forEach { name ->
-                    zip.putNextEntry(ZipEntry(name))
-                    val generatedText = generated[name]
-                    if (generatedText != null) {
-                        zip.write(generatedText.toByteArray(Charsets.UTF_8))
-                    } else {
-                        val source = File(dir, name).apply { if (!exists()) createNewFile() }
-                        source.inputStream().use { input -> input.copyTo(zip) }
-                    }
-                    zip.closeEntry()
+        ZipOutputStream(BufferedOutputStream(output)).use { zip ->
+            exportFiles.forEach { name ->
+                zip.putNextEntry(ZipEntry(name))
+                val generatedText = generated[name]
+                if (generatedText != null) {
+                    zip.write(generatedText.toByteArray(Charsets.UTF_8))
+                } else {
+                    val source = File(dir, name).apply { if (!exists()) createNewFile() }
+                    source.inputStream().use { input -> input.copyTo(zip) }
                 }
+                zip.closeEntry()
             }
         }
-        recordEvent("export diagnostics zip completed entries=${exportFiles.joinToString()}")
         return exportFiles
     }
 
@@ -188,6 +196,9 @@ object ArGlassesDiagnostics {
                             }.ifBlank { "none" },
                         ),
                     )
+                    appendLine("  preferred2dDisplayProfile=${model.preferred2dDisplayProfile}")
+                    appendLine("  preferred3dDisplayProfile=${model.preferred3dDisplayProfile}")
+                    appendLine("  showInArctrlDisplayModeToggle=${model.showInArctrlDisplayModeToggle}")
                 }
             }
             appendLine()

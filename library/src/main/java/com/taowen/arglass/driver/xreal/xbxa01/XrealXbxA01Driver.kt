@@ -3,8 +3,8 @@ package com.taowen.arglass.driver.xreal.xbxa01
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
+import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
@@ -21,9 +21,15 @@ internal object XrealXbxA01Driver : GlassesDriver {
         GlassesModel(
             id, "XREAL", profile.marketName, 0x3318, profile.productId,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D), id,
+            id,
             supportedDisplayProfiles = XrealXbxA01DisplayModeProtocol.profiles,
-            preferred3dDisplayMode = DisplayMode.FULL_SBS_3D,
+            preferred2dDisplayProfile = XrealXbxA01DisplayModeProtocol.profiles.firstOrNull {
+                it.layout == GlassesDisplayLayout.MONO_2D && it.refreshRateHz == 60
+            },
+            preferred3dDisplayProfile = XrealXbxA01DisplayModeProtocol.profiles.firstOrNull {
+                it.layout == GlassesDisplayLayout.FULL_SBS_3D && it.refreshRateHz == 60
+            },
+            showInArctrlDisplayModeToggle = true,
         ) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,

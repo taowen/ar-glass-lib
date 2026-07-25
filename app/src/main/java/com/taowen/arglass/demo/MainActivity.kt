@@ -1,18 +1,21 @@
 package com.taowen.arglass.demo
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.FileProvider
 import com.taowen.arglass.ArGlassesDiagnostics
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.ArGlassesManager
 import com.taowen.arglass.ConnectedGlasses
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.XrealEyeCameraCatalog
+import java.io.File
 
 /** Device identification and navigation only. No hardware check runs here. */
 class MainActivity : Activity(), ArGlassesListener {
@@ -28,16 +31,7 @@ class MainActivity : Activity(), ArGlassesListener {
         content.addView(status, margins(top = 12))
         content.addView(Button(this).apply {
             text = "导出诊断 zip"
-            setOnClickListener {
-                startActivityForResult(
-                    Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "application/zip"
-                        putExtra(Intent.EXTRA_TITLE, ArGlassesDiagnostics.defaultZipFileName())
-                    },
-                    EXPORT_LOGS_REQUEST,
-                )
-            }
+            setOnClickListener { shareDiagnosticsZip() }
         }, margins(top = 12))
         manager = ArGlassesManager(this, mainExecutor, this)
     }
@@ -79,23 +73,35 @@ class MainActivity : Activity(), ArGlassesListener {
         }, margins(top = 12))
     }
 
-    @Deprecated("Uses framework Activity results to keep the diagnostic APK dependency-free")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != EXPORT_LOGS_REQUEST || resultCode != RESULT_OK) return
-        val target = data?.data ?: return
-        status.text = "正在导出诊断 zip…"
+    private fun shareDiagnosticsZip() {
+        status.text = "正在生成诊断 zip…"
         Thread({
-            val result = runCatching { ArGlassesDiagnostics.exportZip(this, target) }
+            val result = runCatching { ArGlassesDiagnostics.exportZipToCacheFile(this) }
             runOnUiThread {
                 result
-                    .onSuccess { status.text = "已导出诊断 zip，包含：${it.joinToString()}" }
-                    .onFailure { status.text = "导出失败：${it.message}" }
+                    .onSuccess(::shareDiagnosticsZipFile)
+                    .onFailure { status.text = "生成诊断 zip 失败：${it.message ?: it.javaClass.simpleName}" }
             }
         }, "ar-glass-diagnostics-export").start()
     }
 
-    override fun onDestroy() { manager.close(); super.onDestroy() }
+    private fun shareDiagnosticsZipFile(zipFile: File) {
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", zipFile)
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "AR Glass 诊断 zip")
+            putExtra(Intent.EXTRA_TEXT, "AR Glass 诊断 zip：${zipFile.name}")
+            clipData = ClipData.newUri(contentResolver, "AR Glass diagnostics zip", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivity(Intent.createChooser(shareIntent, "发送 AR Glass 诊断 zip"))
+            status.text = "请选择一个应用发送诊断 zip"
+        } catch (error: RuntimeException) {
+            status.text = "打开分享界面失败：${error.message ?: error.javaClass.simpleName}"
+        }
+    }
 
-    private companion object { const val EXPORT_LOGS_REQUEST = 7001 }
+    override fun onDestroy() { manager.close(); super.onDestroy() }
 }

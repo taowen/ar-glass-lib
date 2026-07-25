@@ -179,14 +179,31 @@ class ArGlassesSession internal constructor(
     val model: GlassesModel,
     private val delegate: DriverSession,
 ) : Closeable {
-    fun queryDisplayMode(): DisplayMode? {
-        ArGlassesDiagnostics.recordEvent("query display mode model=${model.id}")
-        return delegate.queryDisplayMode().also { ArGlassesDiagnostics.recordEvent("query display mode result model=${model.id} mode=$it") }
+    fun isIn3d(): Boolean? {
+        ArGlassesDiagnostics.recordEvent("query 3d state model=${model.id}")
+        return queryDisplayProfile()?.is3d.also {
+            ArGlassesDiagnostics.recordEvent("query 3d state result model=${model.id} isIn3d=$it")
+        }
     }
 
-    fun setDisplayMode(mode: DisplayMode): Boolean {
-        ArGlassesDiagnostics.recordEvent("set display mode model=${model.id} mode=$mode")
-        return delegate.setDisplayMode(mode).also { ArGlassesDiagnostics.recordEvent("set display mode result model=${model.id} mode=$mode ok=$it") }
+    fun switchTo3d(): Boolean {
+        val profile = requireNotNull(model.preferred3dDisplayProfile) {
+            "${model.displayName} does not declare a preferred 3D display profile"
+        }
+        ArGlassesDiagnostics.recordEvent("switch to 3d model=${model.id} profile=${profile.id}")
+        return setDisplayProfile(profile).also {
+            ArGlassesDiagnostics.recordEvent("switch to 3d result model=${model.id} profile=${profile.id} ok=$it")
+        }
+    }
+
+    fun switchTo2d(): Boolean {
+        val profile = requireNotNull(model.preferred2dDisplayProfile) {
+            "${model.displayName} does not declare a preferred 2D display profile"
+        }
+        ArGlassesDiagnostics.recordEvent("switch to 2d model=${model.id} profile=${profile.id}")
+        return setDisplayProfile(profile).also {
+            ArGlassesDiagnostics.recordEvent("switch to 2d result model=${model.id} profile=${profile.id} ok=$it")
+        }
     }
 
     fun queryDisplayProfile(): GlassesDisplayProfile? {

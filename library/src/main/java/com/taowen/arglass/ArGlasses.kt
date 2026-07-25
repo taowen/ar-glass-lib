@@ -5,15 +5,6 @@ import com.taowen.arglass.driver.GlassesDriverRegistry
 
 enum class GlassesCapability { IMU, DISPLAY_MODE, DISPLAY_RESOLUTION, CAMERA }
 
-enum class DisplayMode(val wireValue: Int, val expectedWidth: Int, val expectedHeight: Int) {
-    MIRROR_2D(1, 1920, 1080),
-    HALF_SBS_3D(2, 1920, 1080),
-    FULL_SBS_3D(3, 3840, 1080),
-    HIGH_REFRESH_SBS_3D(4, 3840, 1080);
-
-    companion object { fun fromWireValue(value: Int) = entries.firstOrNull { it.wireValue == value } }
-}
-
 enum class GlassesDisplayLayout { MONO_2D, HALF_SBS_3D, FULL_SBS_3D }
 
 data class GlassesDisplayProfile(
@@ -22,8 +13,9 @@ data class GlassesDisplayProfile(
     val height: Int,
     val refreshRateHz: Int,
     val layout: GlassesDisplayLayout,
-    val compatibilityMode: DisplayMode,
-)
+) {
+    val is3d: Boolean get() = layout != GlassesDisplayLayout.MONO_2D
+}
 
 data class GlassesModel(
     val id: String,
@@ -32,14 +24,13 @@ data class GlassesModel(
     val usbVendorId: Int,
     val usbProductId: Int,
     val capabilities: Set<GlassesCapability>,
-    val supportedDisplayModes: Set<DisplayMode>,
     internal val driverId: String,
     val supportedDisplayProfiles: List<GlassesDisplayProfile> = emptyList(),
-    val preferred3dDisplayMode: DisplayMode? = listOf(
-        DisplayMode.FULL_SBS_3D,
-        DisplayMode.HALF_SBS_3D,
-        DisplayMode.HIGH_REFRESH_SBS_3D,
-    ).firstOrNull(supportedDisplayModes::contains),
+    val preferred2dDisplayProfile: GlassesDisplayProfile? =
+        supportedDisplayProfiles.firstOrNull { !it.is3d },
+    val preferred3dDisplayProfile: GlassesDisplayProfile? =
+        supportedDisplayProfiles.firstOrNull { it.is3d },
+    val showInArctrlDisplayModeToggle: Boolean = GlassesCapability.DISPLAY_MODE in capabilities,
 ) {
     val displayName: String get() = "$manufacturer $model"
 }

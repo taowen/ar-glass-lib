@@ -19,8 +19,17 @@ internal class GrawoowG530Session(usbManager:UsbManager,private val mcuDevice:Us
     private val worker:Thread?
     init { check(mcu.claim(mcuDevice.getInterface(0))){"Cannot claim Grawoow MCU"}
         if(imuEnabled){check(requireNotNull(ov).claim(requireNotNull(imuPort).first)){"Cannot claim Grawoow IMU"};worker=Thread(::readImu,"grawoow-g530-imu").also(Thread::start)}else worker=null }
-    @Synchronized override fun queryDisplayMode()=command(0x8007)?.firstOrNull()?.let{if(it.toInt()==1)DisplayMode.FULL_SBS_3D else DisplayMode.MIRROR_2D}
-    @Synchronized override fun setDisplayMode(mode:DisplayMode):Boolean { val v=when(mode){DisplayMode.MIRROR_2D->0;DisplayMode.FULL_SBS_3D->1;else->return false};return command(0x8008,byteArrayOf(v.toByte()))!=null }
+    @Synchronized override fun queryDisplayProfile()=command(0x8007)?.firstOrNull()?.let{
+        if(it.toInt()==1)GrawoowG530Driver.fullSbs3dProfile else GrawoowG530Driver.twoDimensionalProfile
+    }
+    @Synchronized override fun setDisplayProfile(profile:GlassesDisplayProfile):Boolean {
+        val v=when(profile.id){
+            GrawoowG530Driver.twoDimensionalProfile.id->0
+            GrawoowG530Driver.fullSbs3dProfile.id->1
+            else->return false
+        }
+        return command(0x8008,byteArrayOf(v.toByte()))!=null
+    }
     private fun command(id:Int,data:ByteArray=byteArrayOf()):ByteArray?{
         val packet=byteArrayOf(0xaa.toByte(),0xbb.toByte(),(id shr 8).toByte(),id.toByte(),0,data.size.toByte())+data
         val request=packet+byteArrayOf(packet.drop(2).sumOf{it.toInt()and 255}.toByte())

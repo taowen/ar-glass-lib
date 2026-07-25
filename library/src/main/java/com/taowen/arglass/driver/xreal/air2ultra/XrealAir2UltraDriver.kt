@@ -3,8 +3,8 @@ package com.taowen.arglass.driver.xreal.air2ultra
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
+import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
@@ -20,9 +20,13 @@ internal object XrealAir2UltraDriver : GlassesDriver {
         GlassesModel(
             id, "XREAL", "Air 2 Ultra", VID, PID,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D),
             id,
             supportedDisplayProfiles = XrealAir2UltraDisplayModeProtocol.profiles,
+            preferred2dDisplayProfile = XrealAir2UltraDisplayModeProtocol.preferred2dProfile,
+            preferred3dDisplayProfile = XrealAir2UltraDisplayModeProtocol.profiles.firstOrNull {
+                it.layout == GlassesDisplayLayout.FULL_SBS_3D && it.refreshRateHz == 72
+            },
+            showInArctrlDisplayModeToggle = true,
         ) else null
 
     override fun open(

@@ -1,6 +1,5 @@
 package com.taowen.arglass.driver.xreal.air2ultra
 
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesDisplayProfile
 
@@ -17,28 +16,21 @@ internal object XrealAir2UltraDisplayModeProtocol {
     private data class ProfileEntry(val protocolValue: Int, val profile: GlassesDisplayProfile)
 
     private val profileTable = listOf(
-        profile(MODE_2D_60HZ, 1920, 1080, 60, GlassesDisplayLayout.MONO_2D, DisplayMode.MIRROR_2D),
-        profile(MODE_3D_60HZ, 3840, 1080, 60, GlassesDisplayLayout.FULL_SBS_3D, DisplayMode.FULL_SBS_3D),
-        profile(MODE_3D_72HZ, 3840, 1080, 72, GlassesDisplayLayout.FULL_SBS_3D, DisplayMode.FULL_SBS_3D),
-        profile(MODE_2D_72HZ, 1920, 1080, 72, GlassesDisplayLayout.MONO_2D, DisplayMode.MIRROR_2D),
-        profile(MODE_3D_90HZ, 3840, 1080, 90, GlassesDisplayLayout.FULL_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D),
-        profile(MODE_2D_90HZ, 1920, 1080, 90, GlassesDisplayLayout.MONO_2D, DisplayMode.MIRROR_2D),
-        profile(MODE_2D_120HZ, 1920, 1080, 120, GlassesDisplayLayout.MONO_2D, DisplayMode.MIRROR_2D),
+        profile(MODE_2D_60HZ, 1920, 1080, 60, GlassesDisplayLayout.MONO_2D),
+        profile(MODE_3D_60HZ, 3840, 1080, 60, GlassesDisplayLayout.FULL_SBS_3D),
+        profile(MODE_3D_72HZ, 3840, 1080, 72, GlassesDisplayLayout.FULL_SBS_3D),
+        profile(MODE_2D_72HZ, 1920, 1080, 72, GlassesDisplayLayout.MONO_2D),
+        profile(MODE_3D_90HZ, 3840, 1080, 90, GlassesDisplayLayout.FULL_SBS_3D),
+        profile(MODE_2D_90HZ, 1920, 1080, 90, GlassesDisplayLayout.MONO_2D),
+        profile(MODE_2D_120HZ, 1920, 1080, 120, GlassesDisplayLayout.MONO_2D),
     )
 
     val profiles: List<GlassesDisplayProfile> = profileTable.map(ProfileEntry::profile)
-
-    fun decode(value: Int): DisplayMode? = decodeProfile(value)?.compatibilityMode
+    val preferred2dProfile: GlassesDisplayProfile? =
+        profileTable.firstOrNull { it.protocolValue == MODE_2D_90HZ }?.profile
 
     fun decodeProfile(value: Int): GlassesDisplayProfile? =
         profileTable.firstOrNull { it.protocolValue == value }?.profile
-
-    fun encode(mode: DisplayMode): Int = when (mode) {
-        DisplayMode.MIRROR_2D -> MODE_2D_90HZ
-        DisplayMode.FULL_SBS_3D -> MODE_3D_72HZ
-        DisplayMode.HIGH_REFRESH_SBS_3D -> MODE_3D_90HZ
-        DisplayMode.HALF_SBS_3D -> error("Air 2 Ultra/Flora has no Half SBS mode in the XREAL mode table")
-    }
 
     fun encodeProfile(profile: GlassesDisplayProfile): Int? =
         profileTable.firstOrNull { it.profile.id == profile.id }?.protocolValue
@@ -49,7 +41,6 @@ internal object XrealAir2UltraDisplayModeProtocol {
         height: Int,
         refreshRateHz: Int,
         layout: GlassesDisplayLayout,
-        compatibilityMode: DisplayMode,
     ) = ProfileEntry(
         protocolValue,
         GlassesDisplayProfile(
@@ -58,7 +49,6 @@ internal object XrealAir2UltraDisplayModeProtocol {
             height = height,
             refreshRateHz = refreshRateHz,
             layout = layout,
-            compatibilityMode = compatibilityMode,
-        ),
+            ),
     )
 }

@@ -3,7 +3,6 @@ package com.taowen.arglass.driver.xreal.airfamily
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
@@ -39,23 +38,10 @@ internal class XrealAirFamilySession(
     init { worker?.start() }
 
     @Synchronized
-    override fun queryDisplayMode(): DisplayMode? {
-        check(displayEnabled) { "This session was not opened for display-mode control" }
-        return usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 }
-            ?.let(displayModeProtocol::decode)
-    }
-
-    @Synchronized
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         check(displayEnabled) { "This session was not opened for display-mode control" }
         return usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 }
             ?.let(displayModeProtocol::decodeProfile)
-    }
-
-    @Synchronized
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
-        check(displayEnabled) { "This session was not opened for display-mode control" }
-        return usb.setMcuDisplayModeValue(displayModeProtocol.encode(mode), displayModeProtocol.setPayloadBytes)
     }
 
     @Synchronized

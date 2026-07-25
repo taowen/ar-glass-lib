@@ -33,10 +33,12 @@ internal class XrealLightSession(
         heartbeat = if (displayEnabled) Thread(::heartbeatLoop, "xreal-light-heartbeat").also(Thread::start) else null
     }
 
-    @Synchronized override fun queryDisplayMode(): DisplayMode? = transact('3','3')?.let(XrealLightProtocol::decodeMode)
-    @Synchronized override fun setDisplayMode(mode: DisplayMode): Boolean {
-        val value = XrealLightProtocol.wire(mode)
-        return transact('1','3', value.toString())?.let(XrealLightProtocol::decodeMode) == mode
+    @Synchronized override fun queryDisplayProfile(): GlassesDisplayProfile? =
+        transact('3','3')?.let(XrealLightProtocol::decodeProfile)
+
+    @Synchronized override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
+        val value = XrealLightProtocol.wire(profile) ?: return false
+        return transact('1','3', value.toString())?.let(XrealLightProtocol::decodeProfile)?.id == profile.id
     }
 
     private fun transact(category: Char, command: Char, data: String = "x"): ByteArray? {

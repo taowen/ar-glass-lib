@@ -1,6 +1,5 @@
 package com.taowen.arglass.driver.xreal.onefamily
 
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesDisplayProfile
 
@@ -15,9 +14,7 @@ internal interface XrealOneDpDisplayModeProtocol {
     val profiles: List<GlassesDisplayProfile>
     val requireInputModeReadback: Boolean get() = true
     val inputModeWriteAttempts: Int get() = 1
-    fun decode(edid: Int): DisplayMode?
     fun decodeProfile(edid: Int): GlassesDisplayProfile?
-    fun encode(mode: DisplayMode): XrealOneDisplayModeCommand?
     fun encodeProfile(profile: GlassesDisplayProfile): XrealOneDisplayModeCommand?
 }
 
@@ -29,7 +26,6 @@ internal fun xrealOneDisplayProfile(
     height: Int,
     refreshRateHz: Int,
     layout: GlassesDisplayLayout,
-    compatibilityMode: DisplayMode,
 ) = XrealOneDisplayProfileEntry(
     XrealOneDisplayModeCommand(edid, inputMode),
     GlassesDisplayProfile(
@@ -38,6 +34,5 @@ internal fun xrealOneDisplayProfile(
         height = height,
         refreshRateHz = refreshRateHz,
         layout = layout,
-        compatibilityMode = compatibilityMode,
     ),
 )

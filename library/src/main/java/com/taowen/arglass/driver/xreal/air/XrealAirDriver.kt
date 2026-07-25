@@ -3,8 +3,8 @@ package com.taowen.arglass.driver.xreal.air
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
+import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
@@ -28,7 +28,9 @@ internal object XrealAirDriver : GlassesDriver {
 internal fun model(id: String, name: String, pid: Int, profiles: List<com.taowen.arglass.GlassesDisplayProfile>) = GlassesModel(
     id, "XREAL", name, 0x3318, pid,
     setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-    setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D, DisplayMode.HALF_SBS_3D, DisplayMode.HIGH_REFRESH_SBS_3D),
     id,
     supportedDisplayProfiles = profiles,
+    preferred2dDisplayProfile = profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
+    preferred3dDisplayProfile = profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
+    showInArctrlDisplayModeToggle = true,
 )

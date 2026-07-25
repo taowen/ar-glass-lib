@@ -3,7 +3,6 @@ package com.taowen.arglass.driver.viture.beast
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
@@ -20,8 +19,11 @@ internal object VitureBeastDriver : GlassesDriver {
         GlassesModel(
             id, "VITURE", "Beast", VID, device.productId,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION, GlassesCapability.CAMERA),
-            setOf(DisplayMode.MIRROR_2D, DisplayMode.FULL_SBS_3D),
             id,
+            supportedDisplayProfiles = VitureBeastProtocol.displayProfiles,
+            preferred2dDisplayProfile = VitureBeastProtocol.twoDimensionalProfile,
+            preferred3dDisplayProfile = VitureBeastProtocol.fullSbs3dProfile,
+            showInArctrlDisplayModeToggle = true,
         ) else null
 
     override fun open(

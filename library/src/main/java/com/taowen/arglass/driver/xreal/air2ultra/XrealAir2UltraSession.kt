@@ -3,7 +3,6 @@ package com.taowen.arglass.driver.xreal.air2ultra
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
@@ -33,24 +32,10 @@ internal class XrealAir2UltraSession(
     init { worker?.start() }
 
     @Synchronized
-    override fun queryDisplayMode(): DisplayMode? {
-        check(displayModeEnabled) { "This session was not opened for display-mode control" }
-        val value = usb.mcuDisplayModeValue(payloadBytes = 1).takeIf { it >= 0 } ?: return null
-        return XrealAir2UltraDisplayModeProtocol.decode(value)
-    }
-
-    @Synchronized
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
         val value = usb.mcuDisplayModeValue(payloadBytes = 1).takeIf { it >= 0 } ?: return null
         return XrealAir2UltraDisplayModeProtocol.decodeProfile(value)
-    }
-
-    @Synchronized
-    override fun setDisplayMode(mode: DisplayMode): Boolean {
-        check(displayModeEnabled) { "This session was not opened for display-mode control" }
-        val floraMode = XrealAir2UltraDisplayModeProtocol.encode(mode)
-        return usb.setMcuDisplayModeValue(floraMode, payloadBytes = 1)
     }
 
     @Synchronized

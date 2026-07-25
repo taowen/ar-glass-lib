@@ -3,7 +3,6 @@ package com.taowen.arglass.driver.rokid.air
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
-import com.taowen.arglass.DisplayMode
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
@@ -31,12 +30,11 @@ internal object RokidAirDriver : GlassesDriver {
             usbVendorId = VID,
             usbProductId = device.productId,
             capabilities = setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
-            supportedDisplayModes = setOf(
-                DisplayMode.MIRROR_2D,
-                DisplayMode.FULL_SBS_3D,
-                DisplayMode.HIGH_REFRESH_SBS_3D,
-            ),
             driverId = id,
+            supportedDisplayProfiles = RokidProtocol.displayProfiles,
+            preferred2dDisplayProfile = RokidProtocol.twoDimensionalProfile,
+            preferred3dDisplayProfile = RokidProtocol.fullSbs3dProfile,
+            showInArctrlDisplayModeToggle = true,
         )
     }
 
