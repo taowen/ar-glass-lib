@@ -36,7 +36,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `ImuCheckActivity`: opens only the IMU interface and validates its stream.
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `DisplayProfileSwitchActivity`: lists every verified glasses-native display profile declared by the current driver, shows `width × height @ refresh-rate` plus the 2D/3D layout, and switches by asking the driver to translate that common profile into its own protocol value.
-- `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
+- `CameraCheckActivity`: appears only for VITURE Beast and previews the separately enumerated `0C45:6368` camera through direct UVC/libusb MJPEG capture.
 - `XrealEyeCameraCheckActivity`: appears for the XREAL One family and tests the open One + Eye USB Ethernet TCP/HEVC path (`169.254.2.1:52995`) without any vendor SO. XREAL Eye is not treated as UVC.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
@@ -146,8 +146,9 @@ unrelated glasses.
 - RAW IMU starts with message `0x0301` and payload `02 02` (120 Hz); reports use message `0x7309`.
 - `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
 - The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
-- Beast's monocular camera is a separate `0C45:6368` USB device. The standalone check APK negotiates its 1920×1080@30 MJPEG stream on interface 1 / isochronous endpoint `0x81` when Android does not expose it through Camera2.
-- The native UVC fallback is adapted from `android-sensor-probe`, where this path was verified on Beast hardware. Its vendored LGPL-2.1-or-later libusb subset is built as a separate shared library and retains the upstream license/source files.
+- Beast's monocular camera is a separate `0C45:6368` USB device. The standalone check APK negotiates its 1920×1080@30 MJPEG stream on interface 1 / isochronous endpoint `0x81` directly through USB host APIs instead of Android Camera2.
+- Android still requires the app's runtime `CAMERA` permission before granting USB permission to video-class devices; this permission gates USB access and does not mean Beast frames flow through Camera2.
+- The native UVC path is adapted from `android-sensor-probe`, where this path was verified on Beast hardware. Its vendored LGPL-2.1-or-later libusb subset is built as a separate shared library and retains the upstream license/source files.
 
 ## VITURE family support notes
 

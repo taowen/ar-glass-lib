@@ -20,7 +20,7 @@ class ArGlassCameraSurfaceOptions @JvmOverloads constructor(
 enum class ArGlassCameraSource {
     BEST,
     XREAL_ONE_EYE,
-    BEAST_UVC,
+    BEAST,
 }
 
 class ArGlassCameraSurfaceStatus(
@@ -67,12 +67,15 @@ object ArGlassCameraSurfaceWriters {
         listener: ArGlassCameraSurfaceStatusListener? = null,
     ): ArGlassCameraSurfaceWriter? {
         if (!surface.isValid) return null
-        val reader = when (source) {
-            ArGlassCameraSource.BEST -> ArGlassCameraFrameReaders.openBest(context)
-            ArGlassCameraSource.XREAL_ONE_EYE -> ArGlassCameraFrameReaders.openXrealOneEye(context)
-            ArGlassCameraSource.BEAST_UVC -> ArGlassCameraFrameReaders.openBeastUvc(context)
-        } ?: return null
-        return SurfaceWriter(surface, reader, options, listener)
+        return when (source) {
+            ArGlassCameraSource.BEST ->
+                openWithReader(ArGlassCameraFrameReaders.openXrealOneEye(context), surface, options, listener)
+                    ?: openBeast(context, surface, options, listener)
+            ArGlassCameraSource.XREAL_ONE_EYE ->
+                openWithReader(ArGlassCameraFrameReaders.openXrealOneEye(context), surface, options, listener)
+            ArGlassCameraSource.BEAST ->
+                openBeast(context, surface, options, listener)
+        }
     }
 
     @JvmStatic
@@ -150,7 +153,7 @@ object ArGlassCameraSurfaceWriters {
             } catch (error: Throwable) {
                 runCatching { writer?.close() }
                 lease.set(false)
-                null
+                throw error
             }
         }
     }
@@ -171,6 +174,22 @@ object ArGlassCameraSurfaceWriters {
             }
         }
     }
+
+    private fun openBeast(
+        context: Context,
+        surface: Surface,
+        options: ArGlassCameraSurfaceOptions,
+        listener: ArGlassCameraSurfaceStatusListener?,
+    ): ArGlassCameraSurfaceWriter? =
+        openWithReader(ArGlassCameraFrameReaders.openBeastUvcOrThrow(context), surface, options, listener)
+
+    private fun openWithReader(
+        reader: ArGlassCameraFrameReader?,
+        surface: Surface,
+        options: ArGlassCameraSurfaceOptions,
+        listener: ArGlassCameraSurfaceStatusListener?,
+    ): ArGlassCameraSurfaceWriter? =
+        reader?.let { SurfaceWriter(surface, it, options, listener) }
 
     private class SurfaceWriter(
         private val surface: Surface,
@@ -394,7 +413,28 @@ class ArGlassCameraSurfaceStream internal constructor(
     }
 
     override fun run() {
-        val open = ArGlassCameraSurfaceWriters.open(context, surface, source, options, listener)
+        val open = runCatching {
+            ArGlassCameraSurfaceWriters.open(context, surface, source, options, listener)
+        }.getOrElse { error ->
+            listener?.onStatus(
+                ArGlassCameraSurfaceStatus(
+                    phase = "打开摄像头失败",
+                    sourceName = null,
+                    framesRead = 0,
+                    framesRendered = 0,
+                    codecConfigFrames = 0,
+                    keyFrames = 0,
+                    bytesRead = 0,
+                    lastFrameBytes = 0,
+                    detail = buildString {
+                        append(ArGlassCameraFrameReaders.describeAvailability(context))
+                        append("\n错误：").append(error.messageChain())
+                    },
+                ),
+            )
+            running.set(false)
+            return
+        }
         if (open == null) {
             listener?.onStatus(
                 ArGlassCameraSurfaceStatus(
@@ -462,5 +502,14 @@ class ArGlassCameraSurfaceStream internal constructor(
             runCatching { current.join(1500) }
         }
         thread = null
+    }
+
+    private fun Throwable.messageChain(): String {
+        val messages = generateSequence(this) { it.cause }
+            .map { it.message ?: it.javaClass.simpleName }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" <- ")
+        return messages.ifBlank { javaClass.simpleName }
     }
 }

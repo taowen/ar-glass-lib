@@ -69,6 +69,16 @@ object ArGlassCameraFrameReaders {
         return openBeastUvc(usbManager, usbManager.deviceList.values.toList())
     }
 
+    internal fun openBeastUvcOrThrow(context: Context): ArGlassCameraFrameReader? {
+        val appContext = context.applicationContext
+        val usbManager = appContext.getSystemService(UsbManager::class.java) ?: return null
+        return openBeastUvc(
+            usbManager,
+            usbManager.deviceList.values.toList(),
+            throwOnSessionFailure = true,
+        )
+    }
+
     @JvmStatic
     fun describeAvailability(context: Context): String {
         val appContext = context.applicationContext
@@ -118,6 +128,7 @@ object ArGlassCameraFrameReaders {
     private fun openBeastUvc(
         usbManager: UsbManager,
         devices: List<UsbDevice>,
+        throwOnSessionFailure: Boolean = false,
     ): ArGlassCameraFrameReader? {
         val device = devices.firstOrNull(BeastCameraCatalog::identify)
             ?.takeIf(usbManager::hasPermission)
@@ -125,7 +136,12 @@ object ArGlassCameraFrameReaders {
         return runCatching {
             val session = BeastCameraSession(usbManager, device)
             JpegReader("VITURE Beast UVC", session) { session.readJpegFrame() }
-        }.getOrNull()
+        }.getOrElse { error ->
+            if (throwOnSessionFailure) {
+                throw IllegalStateException("VITURE Beast UVC open failed", error)
+            }
+            null
+        }
     }
 
     private class JpegReader(

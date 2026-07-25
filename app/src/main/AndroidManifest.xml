@@ -1,6 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
-    <uses-feature android:name="android.hardware.camera.external" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
     <application android:name=".CheckApplication" android:theme="@style/AppTheme" android:label="AR Glass Check">
         <activity android:name=".ImuCheckActivity" android:exported="false" />

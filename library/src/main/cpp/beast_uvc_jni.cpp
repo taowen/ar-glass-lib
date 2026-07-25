@@ -9,6 +9,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -43,6 +44,13 @@ struct Uvc {
 Uvc* from(jlong p) { return reinterpret_cast<Uvc*>(static_cast<intptr_t>(p)); }
 uint32_t le32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24; }
 void put32(uint8_t* p, uint32_t v) { p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
+std::string usbError(const char* operation, int result) {
+    return std::string(operation) + " failed: " + libusb_error_name(result) + " (" + std::to_string(result) + ")";
+}
+void throwIllegalState(JNIEnv* env, const std::string& message) {
+    jclass type = env->FindClass("java/lang/IllegalStateException");
+    if (type) env->ThrowNew(type, message.c_str());
+}
 
 int control(Uvc* u, int type, int request, int value, int index, uint8_t* data, int size, int timeout) {
     const int result = libusb_control_transfer(u->handle, type, request, value, index, data, size, timeout);
@@ -220,14 +228,26 @@ bool selectAlt(libusb_device_handle* handle, int desired, int& alt, int& packetS
 }
 }
 
-extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_BeastCameraNative_start(JNIEnv*, jobject, jint fd) {
+extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_BeastCameraNative_start(JNIEnv* env, jobject, jint fd) {
     auto* u = new Uvc();
+    std::string failure;
     uint8_t format = 0;
     uint8_t frame = 0;
     uint32_t interval = 333333;
     uint8_t probe[26]{};
     libusb_set_option(nullptr, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, nullptr);
-    if (libusb_init(&u->context) != 0 || libusb_wrap_sys_device(u->context, fd, &u->handle) != 0) goto fail;
+    {
+        int result = libusb_init(&u->context);
+        if (result != 0) {
+            failure = usbError("libusb_init", result);
+            goto fail;
+        }
+        result = libusb_wrap_sys_device(u->context, fd, &u->handle);
+        if (result != 0) {
+            failure = usbError("libusb_wrap_sys_device", result);
+            goto fail;
+        }
+    }
     {
         libusb_device_descriptor descriptor{};
         if (libusb_get_device_descriptor(libusb_get_device(u->handle), &descriptor) == 0) {
@@ -238,8 +258,17 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_BeastCameraNative_sta
     if (libusb_kernel_driver_active(u->handle, kStreamingInterface) == 1) {
         libusb_detach_kernel_driver(u->handle, kStreamingInterface);
     }
-    if (libusb_claim_interface(u->handle, kStreamingInterface) != 0) goto fail;
-    if (!findFormat(u->handle, format, frame, interval, u->altSetting, u->packetSize)) goto fail_claim;
+    {
+        int result = libusb_claim_interface(u->handle, kStreamingInterface);
+        if (result != 0) {
+            failure = usbError("libusb_claim_interface(1)", result);
+            goto fail;
+        }
+    }
+    if (!findFormat(u->handle, format, frame, interval, u->altSetting, u->packetSize)) {
+        failure = "Unable to find Beast MJPEG 1920x1080 format and isochronous endpoint";
+        goto fail_claim;
+    }
     // Exact libuvc sequence used by VITURE SDK 2.3.2 on Beast.
     control(u, 0xa1, 0x83, 0x0100, kStreamingInterface, probe, sizeof(probe), 1500);
     std::memset(probe, 0, sizeof(probe));
@@ -249,17 +278,45 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_BeastCameraNative_sta
     put32(probe + 4, interval);
     put32(probe + 18, 0x003f4a4d);
     put32(probe + 22, 2400);
-    if (control(u, 0x21, 0x01, 0x0100, kStreamingInterface, probe, sizeof(probe), 1500) < 0) goto fail_claim;
-    if (control(u, 0xa1, 0x81, 0x0100, kStreamingInterface, probe, sizeof(probe), 1500) < 26) goto fail_claim;
+    {
+        int result = control(u, 0x21, 0x01, 0x0100, kStreamingInterface, probe, sizeof(probe), 1500);
+        if (result < 0) {
+            failure = usbError("VS_PROBE_CONTROL SET_CUR", result);
+            goto fail_claim;
+        }
+        result = control(u, 0xa1, 0x81, 0x0100, kStreamingInterface, probe, sizeof(probe), 1500);
+        if (result < 26) {
+            failure = result < 0
+                ? usbError("VS_PROBE_CONTROL GET_CUR", result)
+                : "VS_PROBE_CONTROL GET_CUR returned a short descriptor";
+            goto fail_claim;
+        }
+    }
     // Keep the endpoint transaction capacity selected above. dwMaxPayload is
     // a negotiation result, not an instruction to resize USBFS iso packets.
-    if (!selectAlt(u->handle, static_cast<int>(le32(probe + 22)), u->altSetting, u->packetSize)) goto fail_claim;
-    if (control(u, 0x21, 0x01, 0x0200, kStreamingInterface, probe, sizeof(probe), 1500) < 0) goto fail_claim;
-    if (libusb_set_interface_alt_setting(u->handle, kStreamingInterface, u->altSetting) != 0) goto fail_claim;
+    if (!selectAlt(u->handle, static_cast<int>(le32(probe + 22)), u->altSetting, u->packetSize)) {
+        failure = "Unable to select Beast isochronous alt setting";
+        goto fail_claim;
+    }
+    {
+        int result = control(u, 0x21, 0x01, 0x0200, kStreamingInterface, probe, sizeof(probe), 1500);
+        if (result < 0) {
+            failure = usbError("VS_COMMIT_CONTROL SET_CUR", result);
+            goto fail_claim;
+        }
+        result = libusb_set_interface_alt_setting(u->handle, kStreamingInterface, u->altSetting);
+        if (result != 0) {
+            failure = usbError("libusb_set_interface_alt_setting", result);
+            goto fail_claim;
+        }
+    }
     u->running = true;
     for (int n = 0; n < kTransfers; ++n) {
         auto* t = libusb_alloc_transfer(kPacketsPerTransfer);
-        if (!t) goto fail_running;
+        if (!t) {
+            failure = "libusb_alloc_transfer failed";
+            goto fail_running;
+        }
         auto* buffer = new uint8_t[u->packetSize * kPacketsPerTransfer];
         libusb_fill_iso_transfer(
             t,
@@ -273,7 +330,11 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_taowen_arglass_BeastCameraNative_sta
             1000);
         libusb_set_iso_packet_lengths(t, u->packetSize);
         u->transfers.push_back(t);
-        if (libusb_submit_transfer(t) != 0) goto fail_running;
+        int result = libusb_submit_transfer(t);
+        if (result != 0) {
+            failure = usbError("libusb_submit_transfer", result);
+            goto fail_running;
+        }
     }
     u->eventThread = std::thread([u] {
         while (u->running) {
@@ -300,6 +361,7 @@ fail:
     if (u->handle) libusb_close(u->handle);
     if (u->context) libusb_exit(u->context);
     delete u;
+    throwIllegalState(env, failure.empty() ? "Beast UVC start failed" : failure);
     return 0;
 }
 

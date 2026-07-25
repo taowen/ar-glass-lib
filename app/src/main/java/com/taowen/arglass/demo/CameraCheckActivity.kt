@@ -1,11 +1,13 @@
 package com.taowen.arglass.demo
 
+import android.Manifest
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -49,7 +51,7 @@ class CameraCheckActivity : Activity() {
         super.onCreate(savedInstanceState)
         content = checkContent()
         content.addView(label("VITURE Beast 摄像头", 25f, true))
-        status = label("使用 ar-glass-lib 统一 Surface 输出接口；Beast 走原生 UVC/MJPEG。", 16f)
+        status = label("使用 ar-glass-lib 统一 Surface 输出接口；Beast 摄像头走原生 UVC/MJPEG。", 16f)
         content.addView(status, margins(top = 12, bottom = 12))
         content.addView(Button(this).apply {
             text = "Beast 摄像头预览"
@@ -93,6 +95,11 @@ class CameraCheckActivity : Activity() {
 
     private fun startBeastPreview() {
         stopCurrent()
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            status.text = "等待 Android 摄像头权限；系统会用它保护 USB video-class 设备访问。"
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+            return
+        }
         val camera = usbManager.deviceList.values.firstOrNull(BeastCameraCatalog::identify)
             ?: return run {
                 status.text = "未发现 Beast 摄像头 0C45:6368\n${ArGlassCameraFrameReaders.describeAvailability(this)}"
@@ -113,6 +120,20 @@ class CameraCheckActivity : Activity() {
         startBeastSurfaceStream()
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != CAMERA_PERMISSION_REQUEST) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            startBeastPreview()
+        } else {
+            status.text = "Android 摄像头权限被拒绝；系统不会授权访问 Beast USB video-class 摄像头。"
+        }
+    }
+
     private fun startBeastSurfaceStream() {
         val surface = previewSurface?.takeIf { it.isValid }
             ?: return run { status.text = "Beast 预览启动失败：预览 Surface 未就绪" }
@@ -120,7 +141,7 @@ class CameraCheckActivity : Activity() {
         stream = ArGlassCameraSurfaceWriters.start(
             this,
             surface,
-            ArGlassCameraSource.BEAST_UVC,
+            ArGlassCameraSource.BEAST,
             ArGlassCameraSurfaceOptions(maxEmptyReads = 0),
         ) { cameraStatus ->
             runOnUiThread { status.text = cameraStatus.toDebugString() }
@@ -149,5 +170,6 @@ class CameraCheckActivity : Activity() {
 
     private companion object {
         const val ACTION_USB_PERMISSION = "com.taowen.arglass.BEAST_CAMERA_USB_PERMISSION"
+        const val CAMERA_PERMISSION_REQUEST = 7202
     }
 }
