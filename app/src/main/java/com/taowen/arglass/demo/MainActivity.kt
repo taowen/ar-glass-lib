@@ -42,14 +42,14 @@ class MainActivity : Activity(), ArGlassesListener {
         if (glasses == null) {
             status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One / One S、Rokid Air / Max、VITURE Beast、LUCI"
             content.addView(Button(this).apply { text = "重新扫描"; setOnClickListener { manager.scan() } }, margins(top = 20))
-            if (usbDevices.any(XrealEyeCameraCatalog::identifyOpenCameraDevice)) {
+            if (usbDevices.any(XrealEyeCameraCatalog::identifyOneFamilyMain)) {
                 addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
             }
             return
         }
         status.text = "已识别：${glasses.model.displayName}\n请选择需要检查的功能"
         if (devices.any { it.model.id == "xreal_one" || it.model.id == "xreal_one_pro" || it.model.id == "xreal_one_s" } ||
-            usbDevices.any(XrealEyeCameraCatalog::identifyOpenCameraDevice)
+            usbDevices.any(XrealEyeCameraCatalog::identifyOneFamilyMain)
         ) {
             addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
         }

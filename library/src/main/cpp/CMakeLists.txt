@@ -28,7 +28,7 @@ if(AR_GLASS_BUILD_JNI)
     add_library(ar_glass_jni SHARED
         ar_glass_jni.cpp
         usb_trace.cpp
-        uvc_jni.cpp
+        beast_uvc_jni.cpp
         xreal_one_dp_jni.cpp
         xreal_one_imu_jni.cpp)
     target_include_directories(ar_glass_jni PRIVATE ${LIBUSB_ROOT}/libusb)

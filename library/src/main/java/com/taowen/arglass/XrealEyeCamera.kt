@@ -1,8 +1,6 @@
 package com.taowen.arglass
 
 import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbConstants
-import android.hardware.usb.UsbManager
 import android.net.ConnectivityManager
 import com.taowen.arglass.driver.xreal.onefamily.XrealOneNcmTransport
 import java.io.BufferedInputStream
@@ -16,31 +14,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** USB identities and descriptor checks for the XREAL Eye RGB camera path. */
 object XrealEyeCameraCatalog {
     private const val XREAL_VENDOR_ID = 0x3318
-    private const val LEGACY_RGB_VENDOR_ID = 0x0817
     private val oneFamilyMainProductIds = setOf(0x0436, 0x0438, 0x043e)
-    private val rgbCompanionIdentities = setOf(
-        LEGACY_RGB_VENDOR_ID to 0x0909,
-        XREAL_VENDOR_ID to 0x0909,
-        XREAL_VENDOR_ID to 0x0910,
-    )
-
-    fun identifyRgbCompanion(device: UsbDevice): Boolean =
-        rgbCompanionIdentities.any { (vid, pid) -> device.vendorId == vid && device.productId == pid }
 
     fun identifyOneFamilyMain(device: UsbDevice): Boolean =
         device.vendorId == XREAL_VENDOR_ID && device.productId in oneFamilyMainProductIds
-
-    fun hasVideoStreamingInterface(device: UsbDevice): Boolean = (0 until device.interfaceCount).any {
-        val intf = device.getInterface(it)
-        intf.interfaceClass == UsbConstants.USB_CLASS_VIDEO && intf.interfaceSubclass == 2
-    }
-
-    fun identifyOpenCameraDevice(device: UsbDevice): Boolean =
-        identifyRgbCompanion(device) || (identifyOneFamilyMain(device) && hasVideoStreamingInterface(device))
-
-    fun findOpenCameraDevice(devices: Collection<UsbDevice>): UsbDevice? =
-        devices.firstOrNull(::identifyRgbCompanion)
-            ?: devices.firstOrNull { identifyOneFamilyMain(it) && hasVideoStreamingInterface(it) }
 
     fun findOneFamilyMainDevice(devices: Collection<UsbDevice>): UsbDevice? =
         devices.firstOrNull(::identifyOneFamilyMain)
@@ -48,24 +25,11 @@ object XrealEyeCameraCatalog {
     fun describeAvailability(devices: Collection<UsbDevice>): String {
         val visible = devices.joinToString { "0x%04x:0x%04x".format(it.vendorId, it.productId) }
         return if (devices.any(::identifyOneFamilyMain)) {
-            "已发现 XREAL One 主设备；One + Eye 的 RGB 视频通常走 USB Ethernet TCP/HEVC，而不是 UVC。可见 USB：$visible"
+            "已发现 XREAL One 主设备；One + Eye 的 RGB 视频走 USB Ethernet TCP/HEVC，而不是 UVC。可见 USB：$visible"
         } else {
-            "未发现 XREAL Eye RGB companion；可见 USB：$visible"
+            "未发现 XREAL One 家族主设备；可见 USB：$visible"
         }
     }
-}
-
-/** Descriptor-driven XREAL Eye UVC MJPEG over libusb, with no vendor SO dependency. */
-class XrealEyeOpenCameraSession(usbManager: UsbManager, device: UsbDevice) : Closeable {
-    init {
-        require(XrealEyeCameraCatalog.identifyOpenCameraDevice(device)) {
-            "Not an XREAL Eye RGB/UVC camera device"
-        }
-    }
-
-    private val delegate = UvcCameraSession(usbManager, device, "XREAL Eye RGB camera")
-    fun readJpegFrame(): ByteArray? = delegate.readJpegFrame()
-    override fun close() = delegate.close()
 }
 
 data class XrealOneEyeHevcFrame(

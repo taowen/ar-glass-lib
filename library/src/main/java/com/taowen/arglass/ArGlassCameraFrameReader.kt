@@ -51,7 +51,6 @@ object ArGlassCameraFrameReaders {
         val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
         val devices = usbManager.deviceList.values.toList()
         return openXrealOneEye(connectivityManager, devices)
-            ?: openXrealUvc(usbManager, devices)
             ?: openBeastUvc(usbManager, devices)
     }
 
@@ -71,19 +70,6 @@ object ArGlassCameraFrameReaders {
                     readTimeoutMs = 150,
                 ),
             )
-        }.getOrNull()
-    }
-
-    private fun openXrealUvc(
-        usbManager: UsbManager,
-        devices: List<UsbDevice>,
-    ): ArGlassCameraFrameReader? {
-        val device = XrealEyeCameraCatalog.findOpenCameraDevice(devices)
-            ?.takeIf(usbManager::hasPermission)
-            ?: return null
-        return runCatching {
-            val session = XrealEyeOpenCameraSession(usbManager, device)
-            JpegReader("XREAL Eye UVC", session) { session.readJpegFrame() }
         }.getOrNull()
     }
 

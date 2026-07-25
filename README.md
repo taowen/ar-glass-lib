@@ -37,7 +37,7 @@ The `library` module is the reusable API. The `app` module is an independently i
 - `DisplayModeCheckActivity`: opens only the display-control interface and provides standalone **开启 3D** / **关闭 3D（恢复 2D）** controls. It selects the model's preferred supported 3D mode while model-specific commands remain isolated in their drivers.
 - `DisplayProfileSwitchActivity`: lists every verified glasses-native display profile declared by the current driver, shows `width × height @ refresh-rate` plus the 2D/3D layout, and switches by asking the driver to translate that common profile into its own protocol value.
 - `CameraCheckActivity`: appears only for VITURE Beast, prefers an external Camera2 device, and falls back to direct UVC/libusb preview from the separately enumerated `0C45:6368` camera.
-- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and tests two open camera paths without any vendor SO. On One + Eye it uses the USB Ethernet TCP/HEVC path (`169.254.2.1:52995`); for firmware that exposes a separate RGB companion device (`0817:0909`, `3318:0909`, or `3318:0910`) it retains the libusb/UVC MJPEG backend.
+- `XrealEyeCameraCheckActivity`: appears for the XREAL One family and tests the open One + Eye USB Ethernet TCP/HEVC path (`169.254.2.1:52995`) without any vendor SO. XREAL Eye is not treated as UVC.
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
@@ -279,7 +279,7 @@ where the transport is native-backed.
 - XRLinuxDriver notes that One/One Pro/1S require latest firmware and glasses
   stabilizer/anchor features disabled. Those prerequisites apply to the IMU
   path; they do not by themselves define an open 2D/3D switching protocol.
-- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable` and the `uvc_bulk_15` composite-mode string. Live XREAL One + Eye testing on 2026-07-24 showed the default `3318:0438` main device reports `hasVideoCapture=false` and exposes no VideoControl/VideoStreaming interface despite that configuration string. Official host code looks for RGB companion USB identities `0817:0909`, `3318:0909`, and `3318:0910`; the open implementation therefore opens those companion devices when they appear, then negotiates UVC descriptors at runtime and supports bulk transfers instead of applying Beast's isochronous assumptions. It does not link or load ARLauncher SO files.
+- ARLauncher exposes RGB-camera frames through `StartRGBCameraDataCapture`, `TryAcquireLatestImage`, and `TryGetRGBCameraDataPlane`, with `RGB_888` and `YUV_420_888` formats. Its native path is `SessionManager` -> `NRRGBCameraWrapper` -> the `NRRgbCamera*` plugin ABI. Extraction of the bundled Gina firmware confirms `rgb_camera_enable` and the `uvc_bulk_15` composite-mode string, but live XREAL One + Eye testing on 2026-07-24 showed the default `3318:0438` main device reports `hasVideoCapture=false` and exposes no VideoControl/VideoStreaming interface. The supported open implementation therefore uses the captured USB Ethernet TCP/HEVC path and does not link or load ARLauncher SO files.
 
 ## XREAL One + Eye RGB camera protocol notes
 
@@ -312,8 +312,8 @@ where the transport is native-backed.
 - `XrealOneEyeCameraSession` 实现了这个开源 TCP/HEVC 后端：通过
   `ConnectivityManager` 找到 link address 为 `169.254.2.10` 的 Android
   Network，连接 52995/52999，发送 start/stop，并返回同时包含 raw XREAL
-  payload、metadata、HEVC bytes 和 NAL 类型的 `XrealOneEyeHevcFrame`。
-  `XrealEyeOpenCameraSession` 仍保留给单独枚举 RGB companion/UVC 的固件。
+  payload、metadata、HEVC bytes 和 NAL 类型的 `XrealOneEyeHevcFrame`。本库
+  不把 XREAL Eye 当作 UVC 设备处理。
 
 ## XREAL Light protocol notes
 

@@ -12,39 +12,37 @@ object BeastCameraCatalog {
     fun identify(device: UsbDevice): Boolean = device.vendorId == VENDOR_ID && device.productId == PRODUCT_ID
 }
 
-open class UvcCameraSession(
+class BeastCameraSession(
     usbManager: UsbManager,
     val device: UsbDevice,
-    private val label: String = "UVC camera",
 ) : Closeable {
-    private val connection = requireNotNull(usbManager.openDevice(device)) { "Cannot open $label" }
-    private val handle = UvcCameraNative.start(connection.fileDescriptor).also {
+    init {
+        require(BeastCameraCatalog.identify(device)) { "Not a VITURE Beast camera" }
+    }
+
+    private val connection = requireNotNull(usbManager.openDevice(device)) { "Cannot open VITURE Beast camera" }
+    private val handle = BeastCameraNative.start(connection.fileDescriptor).also {
         if (it == 0L) connection.close()
     }
     private val closed = AtomicBoolean(false)
 
     init {
-        check(handle != 0L) { "$label UVC MJPEG negotiation failed" }
+        check(handle != 0L) { "Beast UVC 1920x1080 MJPEG negotiation failed" }
     }
 
     fun readJpegFrame(): ByteArray? {
         check(!closed.get()) { "Camera session is closed" }
-        return UvcCameraNative.readFrame(handle)
+        return BeastCameraNative.readFrame(handle)
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        UvcCameraNative.stop(handle)
+        BeastCameraNative.stop(handle)
         connection.close()
     }
 }
 
-class BeastCameraSession(usbManager: UsbManager, device: UsbDevice) :
-    UvcCameraSession(usbManager, device, "VITURE Beast camera") {
-    init { require(BeastCameraCatalog.identify(device)) { "Not a VITURE Beast camera" } }
-}
-
-internal object UvcCameraNative {
+internal object BeastCameraNative {
     init { System.loadLibrary("ar_glass") }
     external fun start(javaFd: Int): Long
     external fun readFrame(handle: Long): ByteArray?
