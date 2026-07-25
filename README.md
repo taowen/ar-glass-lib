@@ -254,11 +254,18 @@ where the transport is native-backed.
 - One-family 2D/3D switching is not the old XREAL USB MCU path. Control My
   Glasses 1.1.0 uses the USB-Ethernet DP RPC service at `169.254.2.1:52999`.
   Verified packets are `0x275e` get current EDID, `0x275f` set current EDID,
-  and `0x2822` set DP input mode. `EDID=5 + inputMode=1` switches XREAL One to
-  `3840x1080@60` Full SBS 3D; `EDID=9 + inputMode=0` restores
+  `0x2821` get DP input mode, and `0x2822` set DP input mode.
+  `EDID=5 + inputMode=1` switches XREAL One to `3840x1080@60` Full SBS 3D;
+  `EDID=9 + inputMode=0` restores
   `1920x1080@90` 2D. These are the only One-family profiles exposed through
   `supportedDisplayProfiles`; additional EDID values are kept out of the public
   profile list until they are verified from hardware captures or open drivers.
+- Do not treat Android seeing `3840x1080` as a complete 3D switch. That only
+  proves the EDID side changed. X1 still needs `inputMode=1`; otherwise a Full
+  SBS frame can be scanned as if it were `1920x1080`, showing only the center of
+  the composed image in the glasses. The library now verifies both EDID and DP
+  input mode, and will resend only `0x2822` when EDID is correct but input mode
+  is not.
 - One, One Pro, and One S each provide their own EDID profile object and profile
   ID prefix. The TCP DP transport is shared; the user-visible profile list is
   not. The One hardware capture is the current direct evidence for EDID 5/9;

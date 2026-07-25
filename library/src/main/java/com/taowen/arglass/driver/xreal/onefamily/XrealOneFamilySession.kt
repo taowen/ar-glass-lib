@@ -44,8 +44,9 @@ internal class XrealOneFamilySession(
             return null
         }
         return readDpEdid()?.let { edid ->
+            val inputMode = readDpInputMode(reportFailure = false)
             displayModeProtocol.decode(edid).also { mode ->
-                status("${model.displayName} DP EDID=$edid，显示模式=${mode?.name ?: "未知"}")
+                status("${model.displayName} DP EDID=$edid，input=$inputMode，显示模式=${mode?.name ?: "未知"}")
             }
         }
     }
@@ -56,8 +57,9 @@ internal class XrealOneFamilySession(
             return null
         }
         return readDpEdid()?.let { edid ->
+            val inputMode = readDpInputMode(reportFailure = false)
             displayModeProtocol.decodeProfile(edid).also { profile ->
-                status("${model.displayName} DP EDID=$edid，显示 profile=${profile?.let(::profileLabel) ?: "未知"}")
+                status("${model.displayName} DP EDID=$edid，input=$inputMode，显示 profile=${profile?.let(::profileLabel) ?: "未知"}")
             }
         }
     }
@@ -84,11 +86,11 @@ internal class XrealOneFamilySession(
                 )
             }
         }.onFailure { error ->
-            status("${model.displayName} DP ACK 未完成，继续读回 EDID 验证：${error.message}")
+            status("${model.displayName} DP ACK 未完成，继续读回 EDID/input 验证：${error.message}")
         }.getOrDefault(false)
-        val verified = transportOk || verifyDpEdid(command.edid)
+        val verified = verifyDpState(command.edid, command.inputMode)
         if (verified) {
-            status("${model.displayName} 已切换 DP 模式：${mode.name}，EDID=${command.edid}, input=${command.inputMode}")
+            status("${model.displayName} 已切换 DP 模式：${mode.name}，EDID=${command.edid}, input=${command.inputMode}, ack=$transportOk")
         } else {
             status("${model.displayName} DP 模式切换未验证成功：${mode.name}")
         }
@@ -117,11 +119,11 @@ internal class XrealOneFamilySession(
                 )
             }
         }.onFailure { error ->
-            status("${model.displayName} DP ACK 未完成，继续读回 EDID 验证：${error.message}")
+            status("${model.displayName} DP ACK 未完成，继续读回 EDID/input 验证：${error.message}")
         }.getOrDefault(false)
-        val verified = transportOk || verifyDpEdid(command.edid)
+        val verified = verifyDpState(command.edid, command.inputMode)
         if (verified) {
-            status("${model.displayName} 已切换 DP profile：${profileLabel(profile)}")
+            status("${model.displayName} 已切换 DP profile：${profileLabel(profile)}，ack=$transportOk")
         } else {
             status("${model.displayName} DP profile 切换未验证成功：${profileLabel(profile)}")
         }
@@ -186,19 +188,63 @@ internal class XrealOneFamilySession(
         }
     }.getOrNull()
 
-    private fun verifyDpEdid(expected: Int): Boolean {
+    private fun readDpInputMode(reportFailure: Boolean = true): Int? = runCatching {
+        XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
+            NativeBridge.xrealOneDpGetInputMode(
+                XrealOneNcmTransport.GLASSES_HOST,
+                XrealOneNcmTransport.CONTROL_PORT,
+                2_000,
+                800,
+            )
+        }
+    }.onFailure { error ->
+        val message = "${model.displayName} DP input mode 读取失败：${error.message}"
+        if (reportFailure) {
+            status(message)
+        } else {
+            Log.i(TAG, message)
+        }
+    }.getOrNull()
+
+    private fun writeDpInputMode(inputMode: Int): Boolean = runCatching {
+        XrealOneNcmTransport.withBoundNetwork(connectivityManager, ::status) {
+            NativeBridge.xrealOneDpSetInputMode(
+                XrealOneNcmTransport.GLASSES_HOST,
+                XrealOneNcmTransport.CONTROL_PORT,
+                inputMode,
+                2_000,
+                1_200,
+            )
+        }
+    }.onFailure { error ->
+        status("${model.displayName} DP input mode 补发失败：${error.message}")
+    }.getOrDefault(false)
+
+    private fun verifyDpState(expectedEdid: Int, expectedInputMode: Int): Boolean {
         // XREAL One family DP mode changes can briefly drop/re-enumerate the display.
         // During that window the control endpoint may answer with partial/malformed EDID data
         // even though the mode switch is already in progress. Wait for the hotplug to settle
         // before treating readback as a failure.
         Thread.sleep(900)
         val deadline = SystemClock.elapsedRealtime() + 7_000
+        var lastEdid: Int? = null
+        var lastInputMode: Int? = null
+        var inputModeResent = false
         while (SystemClock.elapsedRealtime() < deadline) {
-            val edid = readDpEdid(reportFailure = false)
-            if (edid == expected) return true
+            lastEdid = readDpEdid(reportFailure = false)
+            lastInputMode = readDpInputMode(reportFailure = false)
+            if (lastEdid == expectedEdid && lastInputMode == expectedInputMode) return true
+            if (lastEdid == expectedEdid && lastInputMode != expectedInputMode && !inputModeResent) {
+                inputModeResent = true
+                status("${model.displayName} EDID 已到位但 input=$lastInputMode，补发 input=$expectedInputMode")
+                writeDpInputMode(expectedInputMode)
+            }
             Thread.sleep(500)
         }
-        return readDpEdid(reportFailure = true) == expected
+        lastEdid = lastEdid ?: readDpEdid(reportFailure = true)
+        lastInputMode = lastInputMode ?: readDpInputMode(reportFailure = true)
+        status("${model.displayName} DP 状态未达预期：期望 EDID=$expectedEdid/input=$expectedInputMode，读回 EDID=$lastEdid/input=$lastInputMode")
+        return false
     }
 
     private fun status(message: String) {

@@ -28,6 +28,14 @@ internal object NativeBridge {
     external fun xrealOneReadImu(handle: Long): ByteArray?
     external fun closeXrealOneTcpImuSession(handle: Long)
     external fun xrealOneDpGetCurrentEdid(host: String, port: Int, connectTimeoutMs: Int, readTimeoutMs: Int): Int
+    external fun xrealOneDpGetInputMode(host: String, port: Int, connectTimeoutMs: Int, readTimeoutMs: Int): Int
+    external fun xrealOneDpSetInputMode(
+        host: String,
+        port: Int,
+        inputMode: Int,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
+    ): Boolean
     external fun xrealOneDpSetDisplayMode(
         host: String,
         port: Int,

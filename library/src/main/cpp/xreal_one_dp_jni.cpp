@@ -20,6 +20,7 @@
 namespace {
 constexpr std::uint16_t kCommandDpGetCurrentEdid = 0x275e;
 constexpr std::uint16_t kCommandDpSetCurrentEdid = 0x275f;
+constexpr std::uint16_t kCommandDpGetInputMode = 0x2821;
 constexpr std::uint16_t kCommandDpSetInputMode = 0x2822;
 constexpr std::size_t kFramePrefixSize = 6;
 constexpr std::size_t kHeaderSize = 10;
@@ -219,9 +220,42 @@ bool send_command_accepting_reenumeration(int fd, std::uint16_t command, std::ui
     return is_success_ack(frame);
 }
 
+bool send_command_once(const char* host, int port, int connect_timeout_ms, int read_timeout_ms,
+                       std::uint16_t command, std::uint8_t sequence,
+                       const std::vector<std::uint8_t>& request_payload) {
+    auto fd = connect_tcp(host, port, connect_timeout_ms, read_timeout_ms);
+    return send_command_accepting_reenumeration(fd.get(), command, sequence, request_payload);
+}
+
+bool send_command_with_retries(const char* host, int port, int connect_timeout_ms, int read_timeout_ms,
+                               std::uint16_t command, std::uint8_t sequence,
+                               const std::vector<std::uint8_t>& request_payload) {
+    std::string last_error = "no attempt";
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        try {
+            if (send_command_once(host, port, connect_timeout_ms, read_timeout_ms,
+                                  command, sequence, request_payload)) {
+                return true;
+            }
+            last_error = "negative ack";
+        } catch (const std::exception& error) {
+            last_error = error.what();
+        }
+        ::usleep(300 * 1000);
+    }
+    throw std::runtime_error("XREAL One DP command retry failed: " + last_error);
+}
+
 int parse_edid_response(const std::vector<std::uint8_t>& frame) {
     if (frame.size() < 14 || frame[10] != 0x22 || frame[11] != 0x02 || frame[12] != 0x10)
         throw std::runtime_error("malformed XREAL One DP EDID response");
+    return frame[13] & 0xff;
+}
+
+int parse_input_mode_response(const std::vector<std::uint8_t>& frame) {
+    if (is_success_ack(frame)) return 0;
+    if (frame.size() < 14 || frame[10] != 0x22 || frame[11] != 0x02 || frame[12] != 0x10)
+        throw std::runtime_error("malformed XREAL One DP input mode response");
     return frame[13] & 0xff;
 }
 
@@ -261,25 +295,67 @@ Java_com_taowen_arglass_NativeBridge_xrealOneDpGetCurrentEdid(
     }
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_taowen_arglass_NativeBridge_xrealOneDpGetInputMode(
+        JNIEnv* env, jobject, jstring host, jint port, jint connect_timeout_ms, jint read_timeout_ms) {
+    try {
+        return with_host(env, host, [&](const char* host_chars) -> jint {
+            auto fd = connect_tcp(host_chars, port, connect_timeout_ms, read_timeout_ms);
+            const auto frame = transact(fd.get(), kCommandDpGetInputMode, 1, {0x1a, 0x00});
+            return static_cast<jint>(parse_input_mode_response(frame));
+        });
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) throw_java(env, error);
+        return -1;
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_taowen_arglass_NativeBridge_xrealOneDpSetInputMode(
+        JNIEnv* env, jobject, jstring host, jint port, jint input_mode,
+        jint connect_timeout_ms, jint read_timeout_ms) {
+    try {
+        return with_host(env, host, [&](const char* host_chars) -> jboolean {
+            const bool sent = send_command_with_retries(
+                host_chars,
+                port,
+                connect_timeout_ms,
+                read_timeout_ms,
+                kCommandDpSetInputMode,
+                1,
+                {0x1a, 0x02, 0x08, static_cast<std::uint8_t>(input_mode & 0xff)});
+            return sent ? JNI_TRUE : JNI_FALSE;
+        });
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) throw_java(env, error);
+        return JNI_FALSE;
+    }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_taowen_arglass_NativeBridge_xrealOneDpSetDisplayMode(
         JNIEnv* env, jobject, jstring host, jint port, jint edid, jint input_mode,
         jint connect_timeout_ms, jint read_timeout_ms) {
     try {
         return with_host(env, host, [&](const char* host_chars) -> jboolean {
-            auto fd = connect_tcp(host_chars, port, connect_timeout_ms, read_timeout_ms);
-            std::uint8_t sequence = 1;
-            const bool edid_sent = send_command_accepting_reenumeration(
-                fd.get(),
+            const bool edid_sent = send_command_once(
+                host_chars,
+                port,
+                connect_timeout_ms,
+                read_timeout_ms,
                 kCommandDpSetCurrentEdid,
-                sequence++,
+                1,
                 {0x1a, 0x02, 0x08, static_cast<std::uint8_t>(edid & 0xff)});
             if (!edid_sent) return JNI_FALSE;
 
-            const bool input_sent = send_command_accepting_reenumeration(
-                fd.get(),
+            ::usleep(350 * 1000);
+            const bool input_sent = send_command_with_retries(
+                host_chars,
+                port,
+                connect_timeout_ms,
+                read_timeout_ms,
                 kCommandDpSetInputMode,
-                sequence++,
+                2,
                 {0x1a, 0x02, 0x08, static_cast<std::uint8_t>(input_mode & 0xff)});
             return input_sent ? JNI_TRUE : JNI_FALSE;
         });
