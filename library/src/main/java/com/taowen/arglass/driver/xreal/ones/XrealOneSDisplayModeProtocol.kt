@@ -8,7 +8,7 @@ import com.taowen.arglass.driver.xreal.onefamily.XrealOneDisplayModeCommand
 import com.taowen.arglass.driver.xreal.onefamily.XrealOneDisplayProfileEntry
 import com.taowen.arglass.driver.xreal.onefamily.xrealOneDisplayProfile
 
-/** GS/One S declares its own profile list instead of reusing One's public profile IDs. */
+/** GS/One S declares its own profile list; EDID 5/inputMode 1 was verified on One S hardware. */
 internal object XrealOneSDisplayModeProtocol : XrealOneDpDisplayModeProtocol {
     private const val EDID_3D_3840_1080_60HZ = 5
     private const val EDID_2D_1920_1080_90HZ = 9

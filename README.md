@@ -256,7 +256,8 @@ where the transport is native-backed.
   Glasses 1.1.0 uses the USB-Ethernet DP RPC service at `169.254.2.1:52999`.
   Verified packets are `0x275e` get current EDID, `0x275f` set current EDID,
   `0x2821` get DP input mode, and `0x2822` set DP input mode.
-  `EDID=5 + inputMode=1` switches XREAL One to `3840x1080@60` Full SBS 3D;
+  `EDID=5 + inputMode=1` switches XREAL One and One S to `3840x1080@60`
+  Full SBS 3D;
   `EDID=9 + inputMode=0` restores
   `1920x1080@90` 2D. These are the only One-family profiles exposed through
   `supportedDisplayProfiles`; additional EDID values are kept out of the public
@@ -269,9 +270,9 @@ where the transport is native-backed.
   is not.
 - One, One Pro, and One S each provide their own EDID profile object and profile
   ID prefix. The TCP DP transport is shared; the user-visible profile list is
-  not. The One hardware capture is the current direct evidence for EDID 5/9;
-  additional per-model EDID profiles should be added only after model-specific
-  hardware captures or open-driver evidence.
+  not. Hardware captures currently verify EDID 5/inputMode 1 for XREAL One and
+  One S `3840x1080@60` Full SBS 3D; additional per-model EDID profiles should
+  be added only after model-specific hardware captures or open-driver evidence.
 - The standalone check APK includes a read-only "XREAL One EDID/input" activity.
   Users can first switch the glasses to a desired state with vendor tools or the
   glasses UI, for example `3840x1080@60` Full SBS 3D, then read the current
