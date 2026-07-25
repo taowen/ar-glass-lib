@@ -27,8 +27,17 @@ class MainActivity : Activity(), ArGlassesListener {
         status = label("请通过 USB-C 插入 AR 眼镜", 16f)
         content.addView(status, margins(top = 12))
         content.addView(Button(this).apply {
-            text = "导出诊断日志"
-            setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), EXPORT_LOGS_REQUEST) }
+            text = "导出诊断 zip"
+            setOnClickListener {
+                startActivityForResult(
+                    Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_TITLE, ArGlassesDiagnostics.defaultZipFileName())
+                    },
+                    EXPORT_LOGS_REQUEST,
+                )
+            }
         }, margins(top = 12))
         manager = ArGlassesManager(this, mainExecutor, this)
     }
@@ -74,10 +83,16 @@ class MainActivity : Activity(), ArGlassesListener {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != EXPORT_LOGS_REQUEST || resultCode != RESULT_OK) return
-        val tree = data?.data ?: return
-        runCatching { ArGlassesDiagnostics.exportToTree(this, tree) }
-            .onSuccess { status.text = "已导出：${it.joinToString()}" }
-            .onFailure { status.text = "导出失败：${it.message}" }
+        val target = data?.data ?: return
+        status.text = "正在导出诊断 zip…"
+        Thread({
+            val result = runCatching { ArGlassesDiagnostics.exportZip(this, target) }
+            runOnUiThread {
+                result
+                    .onSuccess { status.text = "已导出诊断 zip，包含：${it.joinToString()}" }
+                    .onFailure { status.text = "导出失败：${it.message}" }
+            }
+        }, "ar-glass-diagnostics-export").start()
     }
 
     override fun onDestroy() { manager.close(); super.onDestroy() }

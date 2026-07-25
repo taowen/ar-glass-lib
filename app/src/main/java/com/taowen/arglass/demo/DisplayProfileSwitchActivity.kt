@@ -70,7 +70,12 @@ class DisplayProfileSwitchActivity : UsbCheckActivity() {
     }
 
     private fun profileLabel(profile: GlassesDisplayProfile): String =
-        "${profile.width}×${profile.height}@${profile.refreshRateHz}Hz ${layoutLabel(profile.layout)}"
+        "${profile.width}×${profile.height}@${profile.refreshRateHz}Hz ${layoutLabel(profile.layout)}${rawModeLabel(profile)}"
+
+    private fun rawModeLabel(profile: GlassesDisplayProfile): String {
+        val value = profile.id.substringAfterLast("_mode_", missingDelimiterValue = "")
+        return if (value.isNotBlank() && value.all(Char::isDigit)) " mode=$value" else ""
+    }
 
     private fun layoutLabel(layout: GlassesDisplayLayout): String = when (layout) {
         GlassesDisplayLayout.MONO_2D -> "2D"

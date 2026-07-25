@@ -44,6 +44,34 @@ class ArGlassesManager(
     private var pendingPermission: UsbDevice? = null
     private var pendingGlasses: ConnectedGlasses? = null
     private var session: ArGlassesSession? = null
+    private val diagnosticListener = object : ArGlassesListener {
+        override fun onDevicesChanged(devices: List<ConnectedGlasses>) {
+            ArGlassesDiagnostics.recordEvent(
+                "devices changed count=${devices.size} " +
+                    devices.joinToString { "0x%04x:0x%04x:%s".format(it.device.vendorId, it.device.productId, it.model.id) },
+            )
+            listener.onDevicesChanged(devices)
+        }
+
+        override fun onPermissionResult(device: ConnectedGlasses, granted: Boolean) {
+            ArGlassesDiagnostics.recordEvent(
+                "permission result model=${device.model.id} vid=0x%04x pid=0x%04x granted=$granted".format(
+                    device.device.vendorId,
+                    device.device.productId,
+                ),
+            )
+            listener.onPermissionResult(device, granted)
+        }
+
+        override fun onStatus(message: String) {
+            ArGlassesDiagnostics.recordEvent("status $message")
+            listener.onStatus(message)
+        }
+
+        override fun onImuSample(sample: ImuSample) {
+            listener.onImuSample(sample)
+        }
+    }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -59,7 +87,7 @@ class ArGlassesManager(
                     }
                     pendingGlasses = null
                     val identified = glasses ?: ArGlassesCatalog.identify(device)?.let { ConnectedGlasses(device, it) } ?: return
-                    dispatch { listener.onPermissionResult(identified, granted && identified.devices.all(usbManager::hasPermission)) }
+                    dispatch { diagnosticListener.onPermissionResult(identified, granted && identified.devices.all(usbManager::hasPermission)) }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED, UsbManager.ACTION_USB_DEVICE_DETACHED -> scan()
             }
@@ -83,7 +111,7 @@ class ArGlassesManager(
                 driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
             ConnectedGlasses(device, model, devices.distinctBy(UsbDevice::getDeviceId))
         }
-    }.also { result -> dispatch { listener.onDevicesChanged(result) } }
+    }.also { result -> dispatch { diagnosticListener.onDevicesChanged(result) } }
 
     fun hasPermission(device: UsbDevice): Boolean = usbManager.hasPermission(device)
     fun hasPermission(glasses: ConnectedGlasses): Boolean = glasses.devices.all(usbManager::hasPermission)
@@ -95,7 +123,7 @@ class ArGlassesManager(
     fun requestPermission(glasses: ConnectedGlasses) {
         pendingGlasses = glasses
         glasses.devices.firstOrNull { !usbManager.hasPermission(it) }?.let(::requestPermissionDevice)
-            ?: dispatch { listener.onPermissionResult(glasses, true) }
+            ?: dispatch { diagnosticListener.onPermissionResult(glasses, true) }
     }
 
     private fun requestPermissionDevice(device: UsbDevice) {
@@ -111,14 +139,17 @@ class ArGlassesManager(
     fun open(device: UsbDevice, feature: SessionFeature = SessionFeature.ALL): ArGlassesSession {
         require(usbManager.hasPermission(device)) { "USB permission has not been granted" }
         val model = requireNotNull(ArGlassesCatalog.identify(device)) { "Unsupported AR glasses" }
+        ArGlassesDiagnostics.recordEvent(
+            "open session model=${model.id} feature=$feature vid=0x%04x pid=0x%04x".format(device.vendorId, device.productId),
+        )
         session?.close()
         val driver = GlassesDriverRegistry.driver(model)
         val devices = listOf(device) + if (driver is CompositeGlassesDriver)
             driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
         require(devices.all(usbManager::hasPermission)) { "USB permission has not been granted for every glasses component" }
         val driverSession = if (driver is CompositeGlassesDriver)
-            driver.openComposite(connectivityManager, usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, listener)
-        else driver.open(connectivityManager, usbManager, device, model, feature, executor, listener)
+            driver.openComposite(connectivityManager, usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, diagnosticListener)
+        else driver.open(connectivityManager, usbManager, device, model, feature, executor, diagnosticListener)
         return ArGlassesSession(device, model, driverSession).also { session = it }
     }
 
@@ -148,14 +179,32 @@ class ArGlassesSession internal constructor(
     val model: GlassesModel,
     private val delegate: DriverSession,
 ) : Closeable {
-    fun queryDisplayMode(): DisplayMode? = delegate.queryDisplayMode()
-    fun setDisplayMode(mode: DisplayMode): Boolean = delegate.setDisplayMode(mode)
-    fun queryDisplayProfile(): GlassesDisplayProfile? = delegate.queryDisplayProfile()
+    fun queryDisplayMode(): DisplayMode? {
+        ArGlassesDiagnostics.recordEvent("query display mode model=${model.id}")
+        return delegate.queryDisplayMode().also { ArGlassesDiagnostics.recordEvent("query display mode result model=${model.id} mode=$it") }
+    }
+
+    fun setDisplayMode(mode: DisplayMode): Boolean {
+        ArGlassesDiagnostics.recordEvent("set display mode model=${model.id} mode=$mode")
+        return delegate.setDisplayMode(mode).also { ArGlassesDiagnostics.recordEvent("set display mode result model=${model.id} mode=$mode ok=$it") }
+    }
+
+    fun queryDisplayProfile(): GlassesDisplayProfile? {
+        ArGlassesDiagnostics.recordEvent("query display profile model=${model.id}")
+        return delegate.queryDisplayProfile().also { ArGlassesDiagnostics.recordEvent("query display profile result model=${model.id} profile=$it") }
+    }
+
     fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
         require(model.supportedDisplayProfiles.any { it.id == profile.id }) {
             "Display profile ${profile.id} is not declared by ${model.displayName}"
         }
-        return delegate.setDisplayProfile(profile)
+        ArGlassesDiagnostics.recordEvent("set display profile model=${model.id} profile=$profile")
+        return delegate.setDisplayProfile(profile).also {
+            ArGlassesDiagnostics.recordEvent("set display profile result model=${model.id} profile=${profile.id} ok=$it")
+        }
     }
-    override fun close() = delegate.close()
+    override fun close() {
+        ArGlassesDiagnostics.recordEvent("close session model=${model.id}")
+        delegate.close()
+    }
 }

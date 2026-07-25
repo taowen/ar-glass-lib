@@ -41,10 +41,28 @@ The `library` module is the reusable API. The `app` module is an independently i
 
 The launcher Activity only identifies the glasses and navigates to a selected check. Display mode commands are never sent during passive detection.
 
-The standalone APK also has a **导出诊断日志** action. It exports two separate binary files instead of mixing diagnostics into logcat:
+The standalone APK also has a **导出诊断 zip** action. There is only one export
+flow: the user picks a zip filename, and the app writes a multi-file diagnostic
+archive. Raw protocol captures are kept as separate binary files instead of
+being mixed into logcat:
 
-- `usb-transfers.bin`: append-only USB permission and raw control/bulk/interrupt transfer records, including VID/PID, endpoint or control parameters, result length, and payload bytes. Record magic is `ARUS` and format version is 1; operation 1 is device-to-host, 2 is host-to-device, 3 is a permission request, and 4 is its result.
-- `crashes.bin`: append-only uncaught exception records with `ARCR` magic, format version 1, timestamp, thread name, and stack trace bytes.
+- `diagnostics.txt`: generated summary with Android build information, visible
+  USB devices and interfaces, recognized glasses, Android display modes, XREAL
+  One-family USB Ethernet readiness, and best-effort current EDID/inputMode.
+- `events.txt`: app-generated status, permission, session, display-mode, crash,
+  and export events. This is not logcat.
+- `usb-transfers.bin`: append-only USB permission and raw control/bulk/interrupt
+  transfer records, including VID/PID, endpoint or control parameters, result
+  length, and payload bytes. Record magic is `ARUS` and format version is 1;
+  operation 1 is device-to-host, 2 is host-to-device, 3 is a permission request,
+  and 4 is its result.
+- `xreal-one-dp-rpc.bin`: append-only XREAL One-family TCP DP RPC records for
+  `169.254.2.1:52999`, including connect attempts, set/get EDID/inputMode raw
+  request frames, raw response frames, and transport errors. Record magic is
+  `ARDP` and format version is 1.
+- `crashes.bin`: append-only uncaught exception records with `ARCR` magic,
+  format version 1, timestamp, thread name, and stack trace bytes.
+- `formats.txt`: exact binary record layout for the files above.
 
 Model code is isolated below `library/.../driver/<vendor>/<model>/`. A driver owns its USB identity, interfaces, wire protocol, IMU decoder, and display-mode behavior. `GlassesDriverRegistry` is the only shared routing table; adding a model does not add protocol branches to another model's session.
 For XREAL display profiles, each concrete model declares its own
@@ -226,19 +244,27 @@ the previously hardware-validated implementation and `ar-drivers-rs`.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
 
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
-- Helen does not use the generic display-mode wire values. For the current XBX
-  compatibility experiment, the default 3D toggle sends `mode=3`
-  (`03 00 00 00`, 3840x1080@60 Full SBS 3D) and 2D restore sends `mode=10`
-  (`0a 00 00 00`, 1920x1080@90 2D). `mode=2` remains the 1.3.3 high-refresh
-  3D mode, not Half SBS. XBX/Helen currently exposes no Half SBS mode.
-  `supportedDisplayProfiles` exposes 1920x1080 2D at 60/72/90/120 Hz and
-  3840x1080 Full SBS 3D at 60/72/90/120 Hz. Mode values in command `0x08` are
-  always encoded as four-byte little-endian integers, matching the official
-  `int EGlassMode` ABI. Some Android hosts enumerate a valid Full SBS 3D
-  output as 640x480; that host display enumeration must not be used as the
-  command success criterion.
-- A01 and A01 Plus each provide their own `supportedDisplayProfiles` object and
-  profile ID prefix, even though their current Helen mode values are identical.
+- Helen does not use the generic display-mode wire values. XBX/Helen currently
+  exposes no Half SBS mode. Mode values in command `0x08` are always encoded as
+  four-byte little-endian integers, matching the official `int EGlassMode` ABI.
+  Some Android hosts enumerate a valid Full SBS 3D output as 640x480; that host
+  display enumeration must not be used as the command success criterion.
+- XBX A01 (`3318:0440`) was calibrated on OnePlus 13 by switching each exposed
+  mode, auto-confirming Android 16's projection prompt, and checking the active
+  external HDMI mode. XBX A01 Plus (`3318:0442`) uses the same table:
+  - `mode=1`: 1920x1080@60Hz 2D. This remains the default 2D restore command.
+  - `mode=10`: 1920x1080@90Hz 2D.
+  - `mode=11`: 1920x1080@120Hz 2D, single-refresh EDID.
+  - `mode=17`: 1920x1080@120Hz 2D, multi-refresh EDID exposing
+    120/90/60Hz after reconnect.
+  - `mode=3`: 3840x1080@60Hz Full SBS 3D. This remains the default 3D toggle.
+  - `mode=4`: 3840x1080@72Hz Full SBS 3D.
+  - `mode=5`, `mode=9`, and `mode=2` were not accepted by this A01 during the
+    calibration run, so they are not exposed by the calibrated
+    `supportedDisplayProfiles` tables.
+- A01 and A01 Plus each still provide their own `supportedDisplayProfiles`
+  object and profile ID prefix. Keep the per-model protocol objects separate so
+  future hardware-specific calibration can diverge without cross-model fallout.
 
 All XREAL USB interfaces and transfers are owned by `XrealNativeUsbSession` in
 JNI/libusb. Kotlin retains Android device enumeration/permission only; XREAL

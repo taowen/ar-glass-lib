@@ -27,6 +27,7 @@ if(AR_GLASS_BUILD_JNI)
     target_link_libraries(ar_glass_libusb PRIVATE log)
     add_library(ar_glass_jni SHARED
         ar_glass_jni.cpp
+        dp_rpc_trace.cpp
         usb_trace.cpp
         beast_uvc_jni.cpp
         xreal_one_dp_jni.cpp

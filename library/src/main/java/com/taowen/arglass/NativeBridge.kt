@@ -54,4 +54,5 @@ internal object NativeBridge {
     ): Int
     external fun closeUsbSession(handle: Long)
     external fun configureUsbDiagnostics(path: String)
+    external fun configureXrealOneDpDiagnostics(path: String)
 }

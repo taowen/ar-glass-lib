@@ -1,4 +1,5 @@
 #include "ar_glass.h"
+#include "dp_rpc_trace.h"
 #include "usb_trace.h"
 
 #include <jni.h>
@@ -320,5 +321,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_taowen_arglass_NativeBridge_configureUsbDiagnostics(JNIEnv* env, jobject, jstring path) {
     const char* value = env->GetStringUTFChars(path, nullptr);
     ar_glass::configure_usb_trace(value);
+    env->ReleaseStringUTFChars(path, value);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_taowen_arglass_NativeBridge_configureXrealOneDpDiagnostics(JNIEnv* env, jobject, jstring path) {
+    const char* value = env->GetStringUTFChars(path, nullptr);
+    ar_glass::configure_xreal_one_dp_trace(value);
     env->ReleaseStringUTFChars(path, value);
 }

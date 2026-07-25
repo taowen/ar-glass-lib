@@ -1,3 +1,5 @@
+#include "dp_rpc_trace.h"
+
 #include <jni.h>
 #include <android/log.h>
 
@@ -79,43 +81,50 @@ void write_be32(std::vector<std::uint8_t>& out, std::uint32_t value) {
 }
 
 ScopedFd connect_tcp(const char* host, int port, int connect_timeout_ms, int read_timeout_ms) {
-    ScopedFd fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
-    if (fd.get() < 0) throw std::runtime_error(std::string("socket failed: ") + std::strerror(errno));
+    ar_glass::record_xreal_one_dp_rpc(host, port, 1, 0, 0, 0, nullptr, 0);
+    try {
+        ScopedFd fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+        if (fd.get() < 0) throw std::runtime_error(std::string("socket failed: ") + std::strerror(errno));
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<std::uint16_t>(port));
-    if (::inet_pton(AF_INET, host, &addr.sin_addr) != 1) throw std::runtime_error("invalid XREAL One DP address");
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<std::uint16_t>(port));
+        if (::inet_pton(AF_INET, host, &addr.sin_addr) != 1) throw std::runtime_error("invalid XREAL One DP address");
 
-    const int flags = ::fcntl(fd.get(), F_GETFL, 0);
-    if (flags < 0) throw std::runtime_error(std::string("fcntl get failed: ") + std::strerror(errno));
-    if (::fcntl(fd.get(), F_SETFL, flags | O_NONBLOCK) != 0)
-        throw std::runtime_error(std::string("fcntl nonblock failed: ") + std::strerror(errno));
+        const int flags = ::fcntl(fd.get(), F_GETFL, 0);
+        if (flags < 0) throw std::runtime_error(std::string("fcntl get failed: ") + std::strerror(errno));
+        if (::fcntl(fd.get(), F_SETFL, flags | O_NONBLOCK) != 0)
+            throw std::runtime_error(std::string("fcntl nonblock failed: ") + std::strerror(errno));
 
-    int rc = ::connect(fd.get(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-    if (rc != 0 && errno != EINPROGRESS) throw std::runtime_error(std::string("connect failed: ") + std::strerror(errno));
-    if (rc != 0) {
-        fd_set write_set;
-        FD_ZERO(&write_set);
-        FD_SET(fd.get(), &write_set);
-        timeval timeout{connect_timeout_ms / 1000, (connect_timeout_ms % 1000) * 1000};
-        rc = ::select(fd.get() + 1, nullptr, &write_set, nullptr, &timeout);
-        if (rc == 0) throw std::runtime_error("connect timed out");
-        if (rc < 0) throw std::runtime_error(std::string("connect select failed: ") + std::strerror(errno));
-        int error = 0;
-        socklen_t error_len = sizeof(error);
-        if (::getsockopt(fd.get(), SOL_SOCKET, SO_ERROR, &error, &error_len) != 0 || error != 0)
-            throw std::runtime_error(std::string("connect completion failed: ") + std::strerror(error));
+        int rc = ::connect(fd.get(), reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        if (rc != 0 && errno != EINPROGRESS) throw std::runtime_error(std::string("connect failed: ") + std::strerror(errno));
+        if (rc != 0) {
+            fd_set write_set;
+            FD_ZERO(&write_set);
+            FD_SET(fd.get(), &write_set);
+            timeval timeout{connect_timeout_ms / 1000, (connect_timeout_ms % 1000) * 1000};
+            rc = ::select(fd.get() + 1, nullptr, &write_set, nullptr, &timeout);
+            if (rc == 0) throw std::runtime_error("connect timed out");
+            if (rc < 0) throw std::runtime_error(std::string("connect select failed: ") + std::strerror(errno));
+            int error = 0;
+            socklen_t error_len = sizeof(error);
+            if (::getsockopt(fd.get(), SOL_SOCKET, SO_ERROR, &error, &error_len) != 0 || error != 0)
+                throw std::runtime_error(std::string("connect completion failed: ") + std::strerror(error));
+        }
+
+        if (::fcntl(fd.get(), F_SETFL, flags) != 0)
+            throw std::runtime_error(std::string("fcntl restore failed: ") + std::strerror(errno));
+
+        timeval read_timeout{read_timeout_ms / 1000, (read_timeout_ms % 1000) * 1000};
+        if (::setsockopt(fd.get(), SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout)) != 0)
+            throw std::runtime_error(std::string("setsockopt read timeout failed: ") + std::strerror(errno));
+
+        ar_glass::record_xreal_one_dp_rpc(host, port, 2, 0, 0, fd.get(), nullptr, 0);
+        return fd;
+    } catch (const std::exception& error) {
+        ar_glass::record_xreal_one_dp_rpc_error(host, port, 6, 0, 0, errno, error.what());
+        throw;
     }
-
-    if (::fcntl(fd.get(), F_SETFL, flags) != 0)
-        throw std::runtime_error(std::string("fcntl restore failed: ") + std::strerror(errno));
-
-    timeval read_timeout{read_timeout_ms / 1000, (read_timeout_ms % 1000) * 1000};
-    if (::setsockopt(fd.get(), SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout)) != 0)
-        throw std::runtime_error(std::string("setsockopt read timeout failed: ") + std::strerror(errno));
-
-    return fd;
 }
 
 std::vector<std::uint8_t> make_request(std::uint16_t command, std::uint8_t sequence, const std::vector<std::uint8_t>& payload) {
@@ -164,7 +173,7 @@ bool pop_frame(std::vector<std::uint8_t>& pending, std::vector<std::uint8_t>& fr
     return false;
 }
 
-bool read_matching_response(int fd, std::uint16_t command, std::uint8_t sequence,
+bool read_matching_response(const char* host, int port, int fd, std::uint16_t command, std::uint8_t sequence,
                             std::vector<std::uint8_t>& out, bool required) {
     std::vector<std::uint8_t> pending;
     for (int reads = 0; reads < 24; ++reads) {
@@ -174,6 +183,15 @@ bool read_matching_response(int fd, std::uint16_t command, std::uint8_t sequence
             const std::uint16_t response_command = (static_cast<std::uint16_t>(frame[0]) << 8) | frame[1];
             const bool is_response = frame[6] == 0x00;
             const std::uint8_t response_sequence = frame[9];
+            ar_glass::record_xreal_one_dp_rpc(
+                host,
+                port,
+                4,
+                response_command,
+                response_sequence,
+                static_cast<int>(frame.size()),
+                frame.data(),
+                frame.size());
             if (response_command == command && is_response && response_sequence == sequence) {
                 out = std::move(frame);
                 return true;
@@ -188,6 +206,7 @@ bool read_matching_response(int fd, std::uint16_t command, std::uint8_t sequence
         }
         if (count == 0) {
             if (!required) return false;
+            ar_glass::record_xreal_one_dp_rpc_error(host, port, 6, command, sequence, 0, "XREAL One DP connection closed");
             throw std::runtime_error("XREAL One DP connection closed");
         }
         if (errno == EINTR) {
@@ -195,10 +214,14 @@ bool read_matching_response(int fd, std::uint16_t command, std::uint8_t sequence
             continue;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-        throw std::runtime_error(std::string("recv failed: ") + std::strerror(errno));
+        const std::string message = std::string("recv failed: ") + std::strerror(errno);
+        ar_glass::record_xreal_one_dp_rpc_error(host, port, 6, command, sequence, errno, message.c_str());
+        throw std::runtime_error(message);
     }
 
     if (!required) return false;
+    ar_glass::record_xreal_one_dp_rpc_error(host, port, 6, command, sequence, 0,
+                                            "timed out waiting for XREAL One DP response");
     throw std::runtime_error("timed out waiting for XREAL One DP response");
 }
 
@@ -206,17 +229,49 @@ bool is_success_ack(const std::vector<std::uint8_t>& frame) {
     return frame.size() >= 12 && frame[10] == 0x22 && frame[11] == 0x00;
 }
 
-std::vector<std::uint8_t> transact(int fd, std::uint16_t command, std::uint8_t sequence, const std::vector<std::uint8_t>& request_payload) {
-    send_all(fd, make_request(command, sequence, request_payload));
+std::vector<std::uint8_t> transact(const char* host, int port, int fd, std::uint16_t command, std::uint8_t sequence,
+                                   const std::vector<std::uint8_t>& request_payload) {
+    const auto request = make_request(command, sequence, request_payload);
+    ar_glass::record_xreal_one_dp_rpc(
+        host,
+        port,
+        3,
+        command,
+        sequence,
+        static_cast<int>(request.size()),
+        request.data(),
+        request.size());
+    try {
+        send_all(fd, request);
+    } catch (const std::exception& error) {
+        ar_glass::record_xreal_one_dp_rpc_error(host, port, 6, command, sequence, errno, error.what());
+        throw;
+    }
     std::vector<std::uint8_t> frame;
-    if (read_matching_response(fd, command, sequence, frame, true)) return frame;
+    if (read_matching_response(host, port, fd, command, sequence, frame, true)) return frame;
     throw std::runtime_error("timed out waiting for XREAL One DP response");
 }
 
-bool send_command_accepting_reenumeration(int fd, std::uint16_t command, std::uint8_t sequence, const std::vector<std::uint8_t>& request_payload) {
-    send_all(fd, make_request(command, sequence, request_payload));
+bool send_command_accepting_reenumeration(const char* host, int port, int fd, std::uint16_t command, std::uint8_t sequence,
+                                          const std::vector<std::uint8_t>& request_payload) {
+    const auto request = make_request(command, sequence, request_payload);
+    ar_glass::record_xreal_one_dp_rpc(
+        host,
+        port,
+        3,
+        command,
+        sequence,
+        static_cast<int>(request.size()),
+        request.data(),
+        request.size());
+    try {
+        send_all(fd, request);
+    } catch (const std::exception& error) {
+        ar_glass::record_xreal_one_dp_rpc_error(host, port, 6, command, sequence, errno, error.what());
+        throw;
+    }
     std::vector<std::uint8_t> frame;
-    if (!read_matching_response(fd, command, sequence, frame, false)) return true;
+    if (!read_matching_response(host, port, fd, command, sequence, frame, false)) return true;
     return is_success_ack(frame);
 }
 
@@ -224,7 +279,7 @@ bool send_command_once(const char* host, int port, int connect_timeout_ms, int r
                        std::uint16_t command, std::uint8_t sequence,
                        const std::vector<std::uint8_t>& request_payload) {
     auto fd = connect_tcp(host, port, connect_timeout_ms, read_timeout_ms);
-    return send_command_accepting_reenumeration(fd.get(), command, sequence, request_payload);
+    return send_command_accepting_reenumeration(host, port, fd.get(), command, sequence, request_payload);
 }
 
 bool send_command_with_retries(const char* host, int port, int connect_timeout_ms, int read_timeout_ms,
@@ -286,7 +341,7 @@ Java_com_taowen_arglass_NativeBridge_xrealOneDpGetCurrentEdid(
     try {
         return with_host(env, host, [&](const char* host_chars) -> jint {
             auto fd = connect_tcp(host_chars, port, connect_timeout_ms, read_timeout_ms);
-            const auto frame = transact(fd.get(), kCommandDpGetCurrentEdid, 1, {0x1a, 0x00});
+            const auto frame = transact(host_chars, port, fd.get(), kCommandDpGetCurrentEdid, 1, {0x1a, 0x00});
             return static_cast<jint>(parse_edid_response(frame));
         });
     } catch (const std::exception& error) {
@@ -301,7 +356,7 @@ Java_com_taowen_arglass_NativeBridge_xrealOneDpGetInputMode(
     try {
         return with_host(env, host, [&](const char* host_chars) -> jint {
             auto fd = connect_tcp(host_chars, port, connect_timeout_ms, read_timeout_ms);
-            const auto frame = transact(fd.get(), kCommandDpGetInputMode, 1, {0x1a, 0x00});
+            const auto frame = transact(host_chars, port, fd.get(), kCommandDpGetInputMode, 1, {0x1a, 0x00});
             return static_cast<jint>(parse_input_mode_response(frame));
         });
     } catch (const std::exception& error) {
