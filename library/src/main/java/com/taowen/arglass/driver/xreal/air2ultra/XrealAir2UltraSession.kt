@@ -26,7 +26,14 @@ internal class XrealAir2UltraSession(
     private val running = AtomicBoolean(true)
     private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
     private val displayModeEnabled = feature == SessionFeature.DISPLAY_MODE || feature == SessionFeature.ALL
-    private val usb = XrealNativeUsbSession(usbManager, device, displayModeEnabled, imuEnabled)
+    private val usb = XrealNativeUsbSession(
+        usbManager,
+        device,
+        displayModeEnabled,
+        imuEnabled,
+        mcuInterfaceId = 0,
+        imuInterfaceId = 2,
+    )
     private val worker = if (imuEnabled) Thread(::runImu, "xreal-air2-ultra-imu") else null
 
     init { worker?.start() }
@@ -34,16 +41,45 @@ internal class XrealAir2UltraSession(
     @Synchronized
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
-        val value = usb.mcuDisplayModeValue(payloadBytes = 1).takeIf { it >= 0 } ?: return null
-        return XrealAir2UltraDisplayModeProtocol.decodeProfile(value)
+        return queryDisplayModeValue()?.let(XrealAir2UltraDisplayModeProtocol::decodeProfile)
     }
 
     @Synchronized
     override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }
         val floraMode = XrealAir2UltraDisplayModeProtocol.encodeProfile(profile) ?: return false
-        return usb.setMcuDisplayModeValue(floraMode, payloadBytes = 1)
+        return setDisplayModeValue(floraMode)
     }
+
+    @Synchronized
+    override fun isIn3d(): Boolean? {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
+        return queryDisplayModeValue()?.let(XrealAir2UltraDisplayModeProtocol::isSbsMode)
+    }
+
+    @Synchronized
+    override fun switchTo3d(profile: GlassesDisplayProfile): Boolean {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
+        val current = queryDisplayModeValue() ?: return false
+        if (XrealAir2UltraDisplayModeProtocol.isSbsMode(current)) return true
+        val target = XrealAir2UltraDisplayModeProtocol.sbsModeFor(current) ?: return false
+        return setDisplayModeValue(target)
+    }
+
+    @Synchronized
+    override fun switchTo2d(profile: GlassesDisplayProfile): Boolean {
+        check(displayModeEnabled) { "This session was not opened for display-mode control" }
+        val current = queryDisplayModeValue() ?: return false
+        if (!XrealAir2UltraDisplayModeProtocol.isSbsMode(current)) return true
+        val target = XrealAir2UltraDisplayModeProtocol.twoDimensionalModeFor(current) ?: return false
+        return setDisplayModeValue(target)
+    }
+
+    private fun queryDisplayModeValue(): Int? =
+        usb.mcuDisplayModeValue(payloadBytes = 1).takeIf { it >= 0 }
+
+    private fun setDisplayModeValue(value: Int): Boolean =
+        usb.setMcuDisplayModeValue(value, payloadBytes = 1)
 
     private fun runImu() {
         try {

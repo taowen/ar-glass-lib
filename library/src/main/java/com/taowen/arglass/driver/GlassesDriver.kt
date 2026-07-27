@@ -75,6 +75,9 @@ internal interface DriverSession : Closeable {
     fun queryDisplayProfile(): GlassesDisplayProfile? = null
     fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean =
         error("Display profile control is not supported")
+    fun isIn3d(): Boolean? = queryDisplayProfile()?.is3d
+    fun switchTo3d(profile: GlassesDisplayProfile): Boolean = setDisplayProfile(profile)
+    fun switchTo2d(profile: GlassesDisplayProfile): Boolean = setDisplayProfile(profile)
 }
 
 internal object GlassesDriverRegistry {

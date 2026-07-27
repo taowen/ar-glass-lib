@@ -213,7 +213,8 @@ unrelated glasses.
 ## XREAL Air 2 Ultra protocol notes
 
 - USB application identity: VID `0x3318`, PID `0x0426`.
-- MCU: interface 0; IMU: interface 1.
+- MCU: interface 0; IMU: interface 2, matching XRLinuxDriver's
+  `xrealInterfaceLibrary` product table.
 - IMU uses CRC32-protected `0xaa` control frames and 64-byte versioned reports.
 - Display modes use CRC32-protected `0xfd` MCU commands `0x07` (query) and `0x08` (set).
 - There is no public cross-model display-mode enum. Public 2D/3D control is
@@ -232,6 +233,10 @@ and `ar-drivers-rs` do not list it, and XRLinuxDriver maps the 120 Hz SBS slot
 down to 90 Hz SBS. Flora's official mode table has no Half SBS entry. Unlike
 Helen, Flora encodes the command `0x08` mode payload as one byte; this matches
 the previously hardware-validated implementation and `ar-drivers-rs`.
+The public `switchTo3d()` / `switchTo2d()` path follows XRLinuxDriver's current
+mode mapping instead of forcing one fixed preferred mode: 60 Hz 2D maps to
+60 Hz SBS, 72 Hz 2D maps to 72 Hz SBS, 90 Hz 2D maps to 90 Hz SBS, and 120 Hz
+2D maps down to 90 Hz SBS. Returning to 2D applies the inverse mapping.
 
 ## XREAL Air family protocol notes
 

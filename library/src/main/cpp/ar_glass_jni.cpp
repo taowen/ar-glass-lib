@@ -50,7 +50,7 @@ public:
         std::lock_guard lock(command_mutex_);
         const auto request_id = next_mcu_request_id_++;
         return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, request_id, payload),
-                        0xfd, command, static_cast<int>(request_id));
+                        0xfd, command, -1);
     }
     std::vector<std::uint8_t> imu(JNIEnv*, std::uint8_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);

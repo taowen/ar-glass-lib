@@ -6,6 +6,7 @@ import com.taowen.arglass.GlassesDisplayProfile
 /** Flora display modes used by ARLauncher/XREAL SDK 3.1.0. */
 internal object XrealAir2UltraDisplayModeProtocol {
     private const val MODE_2D_60HZ = 1
+    private const val MODE_HALF_SBS_60HZ = 8
     private const val MODE_3D_60HZ = 3
     const val MODE_3D_72HZ = 4
     private const val MODE_2D_72HZ = 5
@@ -35,6 +36,23 @@ internal object XrealAir2UltraDisplayModeProtocol {
     fun encodeProfile(profile: GlassesDisplayProfile): Int? =
         profileTable.firstOrNull { it.profile.id == profile.id }?.protocolValue
 
+    fun isSbsMode(value: Int): Boolean = value in sbsModes
+
+    fun sbsModeFor(currentValue: Int): Int? = when (currentValue) {
+        MODE_2D_60HZ -> MODE_3D_60HZ
+        MODE_2D_72HZ -> MODE_3D_72HZ
+        MODE_2D_90HZ -> MODE_3D_90HZ
+        MODE_2D_120HZ -> MODE_3D_90HZ
+        else -> null
+    }
+
+    fun twoDimensionalModeFor(currentValue: Int): Int? = when (currentValue) {
+        MODE_3D_60HZ, MODE_HALF_SBS_60HZ -> MODE_2D_60HZ
+        MODE_3D_72HZ -> MODE_2D_72HZ
+        MODE_3D_90HZ -> MODE_2D_90HZ
+        else -> null
+    }
+
     private fun profile(
         protocolValue: Int,
         width: Int,
@@ -51,4 +69,6 @@ internal object XrealAir2UltraDisplayModeProtocol {
             layout = layout,
             ),
     )
+
+    private val sbsModes = setOf(MODE_3D_60HZ, MODE_3D_72HZ, MODE_3D_90HZ, MODE_HALF_SBS_60HZ)
 }

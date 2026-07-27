@@ -181,7 +181,7 @@ class ArGlassesSession internal constructor(
 ) : Closeable {
     fun isIn3d(): Boolean? {
         ArGlassesDiagnostics.recordEvent("query 3d state model=${model.id}")
-        return queryDisplayProfile()?.is3d.also {
+        return delegate.isIn3d().also {
             ArGlassesDiagnostics.recordEvent("query 3d state result model=${model.id} isIn3d=$it")
         }
     }
@@ -191,7 +191,7 @@ class ArGlassesSession internal constructor(
             "${model.displayName} does not declare a preferred 3D display profile"
         }
         ArGlassesDiagnostics.recordEvent("switch to 3d model=${model.id} profile=${profile.id}")
-        return setDisplayProfile(profile).also {
+        return delegate.switchTo3d(profile).also {
             ArGlassesDiagnostics.recordEvent("switch to 3d result model=${model.id} profile=${profile.id} ok=$it")
         }
     }
@@ -201,7 +201,7 @@ class ArGlassesSession internal constructor(
             "${model.displayName} does not declare a preferred 2D display profile"
         }
         ArGlassesDiagnostics.recordEvent("switch to 2d model=${model.id} profile=${profile.id}")
-        return setDisplayProfile(profile).also {
+        return delegate.switchTo2d(profile).also {
             ArGlassesDiagnostics.recordEvent("switch to 2d result model=${model.id} profile=${profile.id} ok=$it")
         }
     }
