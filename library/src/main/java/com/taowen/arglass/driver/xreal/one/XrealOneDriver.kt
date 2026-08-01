@@ -26,7 +26,6 @@ internal object XrealOneDriver : GlassesDriver {
             supportedDisplayProfiles = XrealOneDisplayModeProtocol.profiles,
             preferred2dDisplayProfile = XrealOneDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
             preferred3dDisplayProfile = XrealOneDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
-            showInArctrlDisplayModeToggle = false,
         )
     } else null
 

@@ -26,7 +26,6 @@ internal object XrealOneSDriver : GlassesDriver {
             supportedDisplayProfiles = XrealOneSDisplayModeProtocol.profiles,
             preferred2dDisplayProfile = XrealOneSDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
             preferred3dDisplayProfile = XrealOneSDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
-            showInArctrlDisplayModeToggle = false,
         ) else null
 
     override fun open(
