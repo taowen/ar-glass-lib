@@ -259,6 +259,10 @@ mode mapping instead of forcing one fixed preferred mode: 60 Hz 2D maps to
 - It then performs the required `0x31 / "3.1.1"` SDK handshake and two initial heartbeats before claiming IMU interface 1.
 - A 100 ms MCU heartbeat remains active for the session lifetime.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
+- Version-2 reports decode gyro/accelerometer from little-endian signed fields,
+  while magnetometer multiplier/divisor are big-endian and magnetic samples use
+  XREAL's high-byte sign-bit transform. Invalid magnetic divisors are exposed as
+  `ImuSample.magneticField == null` instead of a misleading zero vector.
 
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
 - Helen does not use the generic display-mode wire values. XBX/Helen currently

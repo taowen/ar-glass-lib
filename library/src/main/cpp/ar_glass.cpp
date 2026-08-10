@@ -3,6 +3,7 @@
 #include <cmath>
 #include <chrono>
 #include <cstring>
+#include <limits>
 
 namespace ar_glass {
 namespace {
@@ -25,6 +26,24 @@ void put_le(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint64_t 
 std::int32_t read_i24(std::span<const std::uint8_t> bytes, std::size_t offset) {
     std::int32_t value = bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
     return (value & 0x800000) != 0 ? value - 0x1000000 : value;
+}
+std::int16_t read_be_i16(std::span<const std::uint8_t> bytes, std::size_t offset) {
+    const auto value = static_cast<std::uint16_t>(bytes[offset]) << 8 |
+                       static_cast<std::uint16_t>(bytes[offset + 1]);
+    return static_cast<std::int16_t>(value);
+}
+std::int32_t read_be_i32(std::span<const std::uint8_t> bytes, std::size_t offset) {
+    const auto value = static_cast<std::uint32_t>(bytes[offset]) << 24 |
+                       static_cast<std::uint32_t>(bytes[offset + 1]) << 16 |
+                       static_cast<std::uint32_t>(bytes[offset + 2]) << 8 |
+                       static_cast<std::uint32_t>(bytes[offset + 3]);
+    return static_cast<std::int32_t>(value);
+}
+std::int16_t read_xreal_v2_magnetic_i16(
+        std::span<const std::uint8_t> bytes, std::size_t offset) {
+    const auto value = static_cast<std::uint16_t>(bytes[offset]) |
+                       static_cast<std::uint16_t>(bytes[offset + 1] ^ 0x80U) << 8;
+    return static_cast<std::int16_t>(value);
 }
 }  // namespace
 
@@ -57,6 +76,8 @@ std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::uint32_t 
 
 bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
     if (b.size() != 64 || b[0] != 1 || (b[1] != 1 && b[1] != 2)) return false;
+    out = {};
+    out.magnetic_field.fill(std::numeric_limits<float>::quiet_NaN());
     out.report_version = b[1];
     out.timestamp_nanos = read_le<std::int64_t>(b, 4);
     const auto scale3 = [&](std::size_t offset, std::size_t stride, std::uint16_t numerator,
@@ -76,10 +97,30 @@ bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
     constexpr float radians = 0.01745329251994329577F;
     out.angular_velocity_radps = {-gyro[0] * radians, gyro[2] * radians, gyro[1] * radians};
     out.acceleration_mps2 = {-accel[0] * 9.81F, accel[2] * 9.81F, accel[1] * 9.81F};
-    const auto mag_offset = read_le<std::int16_t>(b, v1 ? 36 : 42);
-    const auto mag_divisor = read_le<std::int32_t>(b, v1 ? 38 : 44);
-    if (mag_divisor != 0) for (std::size_t i = 0; i < 3; ++i)
-        out.magnetic_field[i] = static_cast<float>(read_le<std::int16_t>(b, (v1 ? 42 : 48) + i * 2) - mag_offset) / mag_divisor;
+    if (v1) {
+        const auto mag_offset = read_le<std::int16_t>(b, 36);
+        const auto mag_divisor = read_le<std::int32_t>(b, 38);
+        if (mag_divisor != 0) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                out.magnetic_field[i] =
+                        static_cast<float>(read_le<std::int16_t>(b, 42 + i * 2) - mag_offset) /
+                        mag_divisor;
+            }
+        }
+    } else {
+        // Version 2 uses a different magnetic encoding from gyro/accel: the
+        // multiplier and divisor are big-endian, and each sample stores its
+        // sign bit XOR 0x80 in the high byte.
+        const auto mag_multiplier = read_be_i16(b, 42);
+        const auto mag_divisor = read_be_i32(b, 44);
+        if (mag_divisor != 0) {
+            for (std::size_t i = 0; i < 3; ++i) {
+                out.magnetic_field[i] =
+                        static_cast<float>(read_xreal_v2_magnetic_i16(b, 48 + i * 2)) *
+                        mag_multiplier / mag_divisor;
+            }
+        }
+    }
     out.temperature_celsius = read_le<std::int16_t>(b, 2) * (v1 ? 0.4831F : 0.007548309F) + 25.F;
     return true;
 }

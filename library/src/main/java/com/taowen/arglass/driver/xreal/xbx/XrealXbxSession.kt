@@ -6,12 +6,11 @@ import android.os.SystemClock
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
-import com.taowen.arglass.ImuSample
-import com.taowen.arglass.NativeBridge
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.xreal.XrealMcuDisplayModeProtocol
 import com.taowen.arglass.driver.xreal.XrealNativeUsbSession
+import com.taowen.arglass.driver.xreal.decodeXrealImuReport
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
@@ -96,7 +95,8 @@ internal class XrealXbxSession(
             check(usb.imu(0x19, byteArrayOf(1)).isNotEmpty()) { "IMU start failed" }
             status("${model.displayName} IMU 已启动")
             while (running.get()) {
-                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeImu)?.let { sample -> executor.execute { listener.onImuSample(sample) } }
+                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)
+                    ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Throwable) {
             if (running.get()) status("${model.displayName} IMU 会话失败：${error.message}")
@@ -137,17 +137,6 @@ internal class XrealXbxSession(
                 SystemClock.sleep(100)
             }
         }, "${model.id}-heartbeat").also(Thread::start)
-    }
-
-    private fun decodeImu(report: ByteArray): ImuSample? {
-        val values = NativeBridge.decodeImuReport(report) ?: return null
-        return ImuSample(
-            ByteBuffer.wrap(report, 4, 8).order(ByteOrder.LITTLE_ENDIAN).long,
-            floatArrayOf(values[1], values[2], values[3]),
-            floatArrayOf(values[4], values[5], values[6]),
-            floatArrayOf(values[7], values[8], values[9]),
-            values[10], values[11].toInt(),
-        )
     }
 
     private fun status(message: String) = executor.execute { listener.onStatus(message) }

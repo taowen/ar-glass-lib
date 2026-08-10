@@ -23,12 +23,16 @@ class ImuCheckActivity : UsbCheckActivity() {
     override fun onImuSample(sample: ImuSample) {
         sampleCount++
         if (sampleCount % 6 != 0L || !::readings.isInitialized) return
+        val magneticText = sample.magneticField?.let { magnetic ->
+            String.format(Locale.US, "%+.3f  %+.3f  %+.3f", magnetic[0], magnetic[1], magnetic[2])
+        } ?: "不可用"
         readings.text = String.format(
             Locale.US,
-            "报告 v%d · %,d 帧\n设备时间 %,d ns\n\nAccel\n%+.3f  %+.3f  %+.3f m/s²\n\nGyro\n%+.3f  %+.3f  %+.3f rad/s\n\n温度 %.1f °C",
+            "报告 v%d · %,d 帧\n设备时间 %,d ns\n\nAccel\n%+.3f  %+.3f  %+.3f m/s²\n\nGyro\n%+.3f  %+.3f  %+.3f rad/s\n\nMag（设备缩放值）\n%s\n\n温度 %.1f °C",
             sample.reportVersion, sampleCount, sample.deviceTimestampNanos,
             sample.accelerationMetersPerSecondSquared[0], sample.accelerationMetersPerSecondSquared[1], sample.accelerationMetersPerSecondSquared[2],
             sample.angularVelocityRadiansPerSecond[0], sample.angularVelocityRadiansPerSecond[1], sample.angularVelocityRadiansPerSecond[2],
+            magneticText,
             sample.temperatureCelsius,
         )
     }
