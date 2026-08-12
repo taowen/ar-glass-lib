@@ -22,6 +22,7 @@ import com.taowen.arglass.driver.xreal.onepro.XrealOneProDriver
 import com.taowen.arglass.driver.xreal.light.XrealLightDriver
 import com.taowen.arglass.driver.grawoow.g530.GrawoowG530Driver
 import com.taowen.arglass.driver.rayneo.airfamily.RayneoAirFamilyDriver
+import com.taowen.arglass.driver.rayneo.gtfamily.RayneoGtFamilyDriver
 import com.taowen.arglass.driver.viture.gen2.VitureGen2Driver
 import java.io.Closeable
 import java.util.concurrent.Executor
@@ -72,6 +73,7 @@ internal interface CompositeGlassesDriver : GlassesDriver {
 }
 
 internal interface DriverSession : Closeable {
+    fun resetHostImuCalibration(): Boolean = false
     fun queryDisplayProfile(): GlassesDisplayProfile? = null
     fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean =
         error("Display profile control is not supported")
@@ -89,6 +91,7 @@ internal object GlassesDriverRegistry {
         XrealLightDriver,
         GrawoowG530Driver,
         RayneoAirFamilyDriver,
+        RayneoGtFamilyDriver,
         VitureGen2Driver,
         XrealXbxA01Driver,
         XrealXbxA01PlusDriver,

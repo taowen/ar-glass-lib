@@ -59,6 +59,9 @@ class MainActivity : Activity(), ArGlassesListener {
             addCheckButton("XREAL Eye 摄像头检测", XrealEyeCameraCheckActivity::class.java)
         }
         if (GlassesCapability.IMU in glasses.model.capabilities) addCheckButton("IMU 检测", ImuCheckActivity::class.java)
+        if (glasses.model.id.startsWith("rayneo_")) {
+            addCheckButton("RayNeo 磁力计校准", RayneoMagneticCalibrationActivity::class.java)
+        }
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("开启 / 关闭 3D", DisplayModeCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities && glasses.model.supportedDisplayProfiles.isNotEmpty()) {
             addCheckButton("显示模式切换", DisplayProfileSwitchActivity::class.java)

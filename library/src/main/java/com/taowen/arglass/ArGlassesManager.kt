@@ -14,6 +14,7 @@ import android.view.Display
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.CompositeGlassesDriver
 import com.taowen.arglass.driver.GlassesDriverRegistry
+import com.taowen.arglass.driver.rayneo.RayneoMagneticCalibrationStore
 import java.io.Closeable
 import java.util.concurrent.Executor
 
@@ -30,6 +31,7 @@ interface ArGlassesListener {
     fun onPermissionResult(device: ConnectedGlasses, granted: Boolean) {}
     fun onStatus(message: String) {}
     fun onImuCalibration(calibration: ImuCalibrationData) {}
+    fun onImuHostCalibrationProgress(progress: ImuHostCalibrationProgress) {}
     fun onImuSample(sample: ImuSample) {}
 }
 
@@ -77,6 +79,15 @@ class ArGlassesManager(
             listener.onImuCalibration(calibration)
         }
 
+        override fun onImuHostCalibrationProgress(progress: ImuHostCalibrationProgress) {
+            ArGlassesDiagnostics.recordEvent(
+                "imu host calibration phase=${progress.phase} accepted=${progress.acceptedSamples}/" +
+                    "${progress.requiredSamples} coverage=${progress.orientationCoverage} " +
+                    "disturbed=${progress.rejectedDisturbanceSamples}",
+            )
+            listener.onImuHostCalibrationProgress(progress)
+        }
+
         override fun onImuSample(sample: ImuSample) {
             listener.onImuSample(sample)
         }
@@ -105,6 +116,7 @@ class ArGlassesManager(
 
     init {
         ArGlassesDiagnostics.initialize(appContext)
+        RayneoMagneticCalibrationStore.initialize(appContext)
         val filter = IntentFilter().apply {
             addAction(ACTION_USB_PERMISSION)
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
@@ -247,6 +259,12 @@ class ArGlassesSession internal constructor(
         }) { "${model.displayName} does not declare display profile $request" }
         return setDisplayProfile(profile)
     }
+
+    /** Clears a driver's persisted host IMU calibration and starts a fresh collection. */
+    fun resetHostImuCalibration(): Boolean = delegate.resetHostImuCalibration().also {
+        ArGlassesDiagnostics.recordEvent("reset host imu calibration model=${model.id} supported=$it")
+    }
+
     override fun close() {
         ArGlassesDiagnostics.recordEvent("close session model=${model.id}")
         delegate.close()

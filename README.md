@@ -347,6 +347,22 @@ Native transactions perform framing, request-ID matching, bounded
 asynchronous-event skipping, and write the shared binary diagnostics stream
 where the transport is native-backed.
 
+## RayNeo nine-axis calibration notes
+
+- Air-family runtime USB is `1BBB:AF50`; GT and GT Max runtime USB is
+  `3941:AF50`. GT/GT Max board IDs are `0x40`/`0x41`. `3941:AF51` is DFU mode,
+  not GT Max runtime mode.
+- Device command `0x3c` supplies the 12-float accelerometer/gyroscope factory
+  transform and acceleration offset. It does not supply a magnetometer
+  hard/soft-iron calibration.
+- The standalone check APK exposes a RayNeo-specific magnetometer calibration
+  Activity. Its implementation is clean-room code and does not package or load
+  RayNeo's shared objects. It follows the behavior recovered from the official
+  host path: online collection, a 2001-sample solve threshold, full-orientation
+  coverage, a full cross-axis ellipsoid correction, and magnetic-disturbance
+  rejection. Successful results are persisted per USB identity, board ID and
+  CU and are applied by later driver sessions.
+
 ## XREAL One family protocol notes
 
 - Runtime USB identities: One Pro `3318:0436` (Gina, official type 41), One `3318:0438` (GF, official type 47), and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.

@@ -20,6 +20,16 @@ data class ImuCalibrationState(
 
 enum class ImuCalibrationSource { DEVICE_FACTORY, HOST_ESTIMATE, MIXED }
 
+enum class ImuHostCalibrationPhase { COLLECTING, DISTURBED, READY }
+
+data class ImuHostCalibrationProgress(
+    val phase: ImuHostCalibrationPhase,
+    val acceptedSamples: Int,
+    val requiredSamples: Int,
+    val orientationCoverage: Float,
+    val rejectedDisturbanceSamples: Int,
+)
+
 data class TemperatureGyroscopeBias(
     val temperatureCelsius: Float,
     /** Bias in the same runtime coordinate system and rad/s units as [ImuSample]. */
