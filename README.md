@@ -19,6 +19,7 @@ Supported models:
 - **VITURE Luma** (`35CA:1131`, open Gen2 RAW IMU)
 - **VITURE Luma Pro** (`35CA:1121` and `35CA:1141`, open Gen2 RAW IMU)
 - **VITURE Luma Cyber** (`35CA:1151`, open Gen2 RAW IMU)
+- **VITURE Pro 2** (`35CA:1301`, open Gen2 RAW IMU)
 - **Rokid glasses** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, `2002`, and `2180`; product string supplies the market name)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
@@ -192,6 +193,15 @@ unrelated glasses.
 - USB controller identities: VID `0x35CA`, PID `0x1201` or `0x1211`.
 - Gen2 V2 packets use a `10 00` header, little-endian message ID and payload length, and a 16-bit payload checksum.
 - RAW IMU starts with message `0x0301` and payload `02 02` (120 Hz); reports use message `0x7309`.
+- The V2 report carries a 64-bit reconstructed IMU timestamp: its millisecond base and microsecond
+  counter are combined with the 24-bit IMU sample-age field. The final three bytes are not a
+  standalone 32-bit timestamp.
+- Startup reads the V2 long-packet calibration commands `0x3302..0x3306`, validates their inner
+  CRC-16/CCITT, and applies gyro/accelerometer/magnetometer bias and 3x3 transforms, accelerometer
+  scale, optional `q_mag_imu`, and all three temperature-drift tables before publishing samples.
+- Factory-corrected magnetic samples feed the host hard-iron/soft-iron ellipsoid calibrator. Its
+  per-device result is persisted, can be reset through `resetHostImuCalibration`, and is published
+  as mixed factory/host calibration.
 - `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
 - The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
 - Beast's monocular camera is a separate `0C45:6368` USB device. The standalone check APK negotiates its 1920×1080@30 MJPEG stream on interface 1 / isochronous endpoint `0x81` directly through USB host APIs instead of Android Camera2.
@@ -203,9 +213,9 @@ unrelated glasses.
 - The currently listed PID/model mapping is cross-checked against
   XRLinuxDriver and must still be verified against hardware or vendor metadata
   before exposing additional product IDs.
-- Luma `1131`, Luma Pro `1121/1141`, and Luma Cyber `1151` expose the open
-  Gen2 `0301 [02 02]` RAW IMU stream with `7309` reports. They currently
-  advertise IMU support only in the standalone APK.
+- Luma `1131`, Luma Pro `1121/1141`, Luma Cyber `1151`, and Pro 2 `1301` expose
+  the open Gen2 `0301 [02 02]` RAW IMU stream with `7309` reports. They share
+  the calibrated nine-axis V2 driver used by Beast.
 - XRLinuxDriver performs their 2D/3D switching through VITURE's proprietary
   `libglasses.so`. The Android SDK license prohibits unauthorized copying,
   distribution, and use, so ar-glass-lib neither bundles it nor falsely exposes

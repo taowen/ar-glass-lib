@@ -57,22 +57,33 @@ internal object VitureBeastProtocol {
         return if (actual == expected) Packet(messageId, bytes.copyOfRange(8, 8 + payloadLength)) else null
     }
 
-    fun decodeImu(bytes: ByteArray, length: Int): ImuSample? {
+    fun decodeImu(bytes: ByteArray, length: Int, hostTimestampNanos: Long = System.nanoTime()): ImuSample? {
         val packet = decode(bytes, length) ?: return null
-        if (packet.messageId != RAW_IMU_REPORT || length < 64) return null
-        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        if (packet.messageId != RAW_IMU_REPORT || packet.payload.size < V2_IMU_PAYLOAD_SIZE) return null
+        val buffer = ByteBuffer.wrap(packet.payload).order(ByteOrder.LITTLE_ENDIAN)
         fun vector(offset: Int) = floatArrayOf(buffer.getFloat(offset), buffer.getFloat(offset + 4), buffer.getFloat(offset + 8))
-        val accelerationG = vector(30)
-        val gyro = vector(18)
-        val magnet = vector(42)
+        val accelerationG = vector(22)
+        val gyro = vector(10)
+        val magnet = vector(34)
         if ((accelerationG + gyro + magnet).any { !it.isFinite() }) return null
+        val baseMilliseconds = buffer.getInt(4).toLong() and 0xffffffffL
+        val sampleCounterMicroseconds = buffer.getInt(0).toLong() and 0xffffffffL
+        val imuAgeMicroseconds = uint24(buffer, 46).toLong()
         return ImuSample(
-            (buffer.getInt(60).toLong() and 0xffffffffL) * 1_000L,
-            FloatArray(3) { accelerationG[it] * 9.81f },
+            baseMilliseconds * 1_000_000L + (sampleCounterMicroseconds - imuAgeMicroseconds) * 1_000L,
+            accelerationG,
             gyro,
             magnet,
-            (buffer.getShort(16).toInt() and 0xffff) / 5f,
+            (buffer.getShort(8).toInt() and 0xffff) * 0.2f,
             2,
+            hostTimestampNanos,
         )
     }
+
+    private fun uint24(buffer: ByteBuffer, offset: Int): Int =
+        (buffer.get(offset).toInt() and 0xff) or
+            ((buffer.get(offset + 1).toInt() and 0xff) shl 8) or
+            ((buffer.get(offset + 2).toInt() and 0xff) shl 16)
+
+    private const val V2_IMU_PAYLOAD_SIZE = 56
 }

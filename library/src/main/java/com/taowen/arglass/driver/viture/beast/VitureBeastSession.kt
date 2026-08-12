@@ -8,9 +8,18 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.ImuCalibrationLevel
+import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuHostCalibrationPhase
+import com.taowen.arglass.ImuSample
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.NativeUsbDeviceSession
+import com.taowen.arglass.driver.rayneo.RayneoMagneticCalibrationStore
+import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibration
+import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibrator
+import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticUpdate
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -40,20 +49,43 @@ internal class VitureBeastSession(
         }
         .filter { it.input != null || it.output != null }
     private val workers = CopyOnWriteArrayList<Thread>()
+    private val commandPort get() = ports.firstOrNull { it.output != null } ?: ports.first()
+    private val magneticCalibrator = RayneoMagneticCalibrator()
+    private val magneticCalibrationStoreKey = runCatching { device.serialNumber }.getOrNull()
+        ?.takeIf(String::isNotBlank)
+        ?.let { "viture:$it" }
+        ?: "viture:${device.vendorId}:${device.productId}:${device.productName.orEmpty()}"
     private val responseLock = Object()
+    @Volatile private var factoryCalibration: VitureV2Calibration? = null
+    @Volatile private var magneticCalibration: RayneoMagneticCalibration? = null
     @Volatile private var displayModeValue: Int? = null
     @Volatile private var nativeModeValue: Int? = null
     @Volatile private var setDisplayStatus: Int? = null
+    private var lastProgressSamples = -HOST_CALIBRATION_PROGRESS_INTERVAL
+    private var lastProgressPhase: ImuHostCalibrationPhase? = null
 
     init {
         check(ports.isNotEmpty()) { "VITURE Beast has no HID protocol interfaces" }
         ports.forEach { check(usb.claim(it.usbInterface)) { "Cannot claim Beast HID interface ${it.usbInterface.id}" } }
         if (imuEnabled) {
+            factoryCalibration = readFactoryCalibration()
+            magneticCalibration = RayneoMagneticCalibrationStore.load(magneticCalibrationStoreKey).also {
+                magneticCalibrator.useCalibration(it)
+            }
+            factoryCalibration?.let { calibration ->
+                executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
+            }
             ports.mapNotNull { it.input }.forEach { input ->
                 Thread({ readLoop(input) }, "viture-beast-hid-${input.address}").also { workers += it; it.start() }
             }
             send(VitureBeastProtocol.command(0x0301, byteArrayOf(2, 2)))
-            status("${model.displayName} RAW IMU 已请求（120 Hz）")
+            status(
+                if (factoryCalibration == null) {
+                    "${model.displayName} RAW IMU 已请求（120 Hz），设备未返回完整九轴出厂校准"
+                } else {
+                    "${model.displayName} 已加载九轴出厂校准并请求 RAW IMU（120 Hz）；请绕三轴旋转以校准环境磁场"
+                },
+            )
         }
     }
 
@@ -128,13 +160,14 @@ internal class VitureBeastSession(
         val bytes = ByteArray(maxOf(64, input.maxPacketSize))
         while (running.get()) {
             val length = usb.transfer(input, bytes, 750)
-            if (length > 0) handlePacket(bytes.copyOf(length), length)
+            val hostTimestampNanos = System.nanoTime()
+            if (length > 0) handlePacket(bytes.copyOf(length), length, hostTimestampNanos)
         }
     }
 
-    private fun handlePacket(bytes: ByteArray, length: Int) {
-        VitureBeastProtocol.decodeImu(bytes, length)?.let { sample ->
-            executor.execute { listener.onImuSample(sample) }
+    private fun handlePacket(bytes: ByteArray, length: Int, hostTimestampNanos: Long = System.nanoTime()) {
+        VitureBeastProtocol.decodeImu(bytes, length, hostTimestampNanos)?.let { rawSample ->
+            executor.execute { listener.onImuSample(calibrate(rawSample)) }
             return
         }
         val packet = VitureBeastProtocol.decode(bytes, length) ?: return
@@ -153,12 +186,195 @@ internal class VitureBeastSession(
         }
     }
 
+    private fun calibrate(rawSample: ImuSample): ImuSample {
+        val factory = factoryCalibration
+        var sample = factory?.calibrateFactory(rawSample) ?: rawSample.copy(
+            accelerationMetersPerSecondSquared = FloatArray(3) {
+                rawSample.accelerationMetersPerSecondSquared[it] * STANDARD_GRAVITY
+            },
+        )
+        val factoryMagnetic = sample.magneticField ?: return sample
+        val update = magneticCalibrator.update(factoryMagnetic)
+        reportMagneticProgress(update)
+        val next = update.calibration
+        if (next != null && magneticCalibration == null) {
+            magneticCalibration = next
+            RayneoMagneticCalibrationStore.save(magneticCalibrationStoreKey, next)
+            factory?.let { calibration ->
+                executor.execute { listener.onImuCalibration(calibration.publicData(next)) }
+            }
+            status("${model.displayName} 磁力计 host 三轴椭球校准完成并已保存")
+        }
+        val activeHostCalibration = magneticCalibration ?: next
+        sample = sample.copy(
+            magneticField = if (update.usable) activeHostCalibration?.apply(factoryMagnetic) ?: factoryMagnetic else null,
+            calibration = if (factory != null) {
+                VitureV2Calibration.calibrationState(activeHostCalibration != null)
+            } else {
+                ImuCalibrationState(
+                    magnetometer = if (activeHostCalibration != null) {
+                        ImuCalibrationLevel.HOST_ESTIMATED
+                    } else {
+                        ImuCalibrationLevel.NONE
+                    },
+                )
+            },
+        )
+        return sample
+    }
+
+    private fun reportMagneticProgress(update: RayneoMagneticUpdate) {
+        val progress = update.progress
+        if (progress.phase != lastProgressPhase ||
+            progress.acceptedSamples - lastProgressSamples >= HOST_CALIBRATION_PROGRESS_INTERVAL
+        ) {
+            lastProgressPhase = progress.phase
+            lastProgressSamples = progress.acceptedSamples
+            executor.execute { listener.onImuHostCalibrationProgress(progress) }
+        }
+    }
+
+    private fun readFactoryCalibration(): VitureV2Calibration? = runCatching {
+        val gyroTemperature = readLongCalibrationPacket(CALIBRATION_GYRO_TEMPERATURE)
+        val imu = readLongCalibrationPacket(CALIBRATION_IMU) ?: return@runCatching null
+        val magnetometer = readLongCalibrationPacket(CALIBRATION_MAGNETOMETER) ?: return@runCatching null
+        val accelerationTemperature = readLongCalibrationPacket(CALIBRATION_ACCELEROMETER_TEMPERATURE)
+        val magnetometerTemperature = readLongCalibrationPacket(CALIBRATION_MAGNETOMETER_TEMPERATURE)
+        VitureV2Calibration.parse(
+            imu,
+            magnetometer,
+            gyroTemperature,
+            accelerationTemperature,
+            magnetometerTemperature,
+        )
+    }.onFailure { error ->
+        status("${model.displayName} 九轴出厂校准读取失败：${error.message}")
+    }.getOrNull()
+
+    private fun readLongCalibrationPacket(messageId: Int): ByteArray? {
+        val assembled = ByteArrayOutputStream()
+        var appSequence = -1
+        var totalSegments = -1
+        var segment = 0
+        while (totalSegments < 0 || segment < totalSegments) {
+            val request = VitureBeastProtocol.command(
+                messageId,
+                byteArrayOf((segment and 0xff).toByte(), ((segment ushr 8) and 0xff).toByte()),
+            )
+            if (!sendToPort(commandPort, request)) return null
+            val payload = awaitCalibrationResponse(messageId, segment) ?: return null
+            val responseSequence = payload[0].toInt() and 0xff
+            val responseTotal = uint16(payload, 1)
+            val responseSegment = uint16(payload, 3)
+            if (responseTotal == 0) return null
+            if (responseTotal == 0xffff || responseSegment != segment) return null
+            if (appSequence < 0) appSequence = responseSequence
+            if (totalSegments < 0) totalSegments = responseTotal
+            if (responseSequence != appSequence || responseTotal != totalSegments) return null
+            assembled.write(payload, CALIBRATION_SEGMENT_HEADER_SIZE, payload.size - CALIBRATION_SEGMENT_HEADER_SIZE)
+            segment++
+        }
+        val packet = assembled.toByteArray()
+        if (packet.size < CALIBRATION_PACKET_HEADER_SIZE) return null
+        val storedCrc = uint16(packet, 4)
+        val calculatedCrc = crc16Ccitt(packet, 6, packet.size - 6)
+        if (storedCrc != calculatedCrc) return null
+        val declaredLength = uint32(packet, 0)
+        if (declaredLength > packet.size || declaredLength < CALIBRATION_PACKET_HEADER_SIZE) return null
+        return packet.copyOf(declaredLength)
+    }
+
+    private fun awaitCalibrationResponse(messageId: Int, requestedSegment: Int): ByteArray? {
+        val deadline = System.nanoTime() + CALIBRATION_RESPONSE_TIMEOUT_NANOS
+        val inputPorts = ports.mapNotNull { it.input }
+        while (System.nanoTime() < deadline) {
+            inputPorts.forEach { input ->
+                val bytes = ByteArray(maxOf(64, input.maxPacketSize))
+                val length = usb.transfer(input, bytes, CALIBRATION_READ_TIMEOUT_MS)
+                if (length > 0) {
+                    val packet = VitureBeastProtocol.decode(bytes, length)
+                    if (packet != null && (packet.messageId and 0x0fff) == (messageId and 0x0fff)) {
+                        calibrationSegmentPayload(packet.payload, requestedSegment)?.let { return it }
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /** Some controller revisions retain the generic response-status byte; the SDK payload wrapper strips it. */
+    private fun calibrationSegmentPayload(payload: ByteArray, requestedSegment: Int): ByteArray? {
+        val candidates = buildList {
+            if (payload.firstOrNull() == 0.toByte() && payload.size > CALIBRATION_SEGMENT_HEADER_SIZE) {
+                add(payload.copyOfRange(1, payload.size))
+            }
+            add(payload)
+        }
+        return candidates.firstOrNull { candidate ->
+            if (candidate.size < CALIBRATION_SEGMENT_HEADER_SIZE) return@firstOrNull false
+            val total = uint16(candidate, 1)
+            (total == 0 || total == 0xffff || total <= MAX_CALIBRATION_SEGMENTS) &&
+                uint16(candidate, 3) == requestedSegment
+        }
+    }
+
+    private fun sendToPort(port: HidPort, command: ByteArray): Boolean {
+        val count = port.output?.let { output -> usb.transfer(output, command, 500) }
+            ?: usb.control(0x21, 0x09, 0x0200, port.usbInterface.id, command, 500)
+        return count == command.size
+    }
+
+    private fun uint16(bytes: ByteArray, offset: Int): Int =
+        (bytes[offset].toInt() and 0xff) or ((bytes[offset + 1].toInt() and 0xff) shl 8)
+
+    private fun uint32(bytes: ByteArray, offset: Int): Int =
+        uint16(bytes, offset) or (uint16(bytes, offset + 2) shl 16)
+
+    private fun crc16Ccitt(bytes: ByteArray, offset: Int, length: Int): Int {
+        var crc = 0
+        for (index in offset until offset + length) {
+            crc = crc xor ((bytes[index].toInt() and 0xff) shl 8)
+            repeat(8) { crc = if (crc and 0x8000 != 0) (crc shl 1 xor 0x1021) else crc shl 1 }
+            crc = crc and 0xffff
+        }
+        return crc
+    }
+
     private fun status(message: String) = executor.execute { listener.onStatus(message) }
+
+    override fun resetHostImuCalibration(): Boolean {
+        RayneoMagneticCalibrationStore.clear(magneticCalibrationStoreKey)
+        magneticCalibration = null
+        magneticCalibrator.reset()
+        lastProgressSamples = -HOST_CALIBRATION_PROGRESS_INTERVAL
+        lastProgressPhase = null
+        factoryCalibration?.let { calibration ->
+            executor.execute { listener.onImuCalibration(calibration.publicData(null)) }
+        }
+        status("${model.displayName} 已清除磁力计 host 校准；请缓慢绕三个轴旋转眼镜")
+        return true
+    }
 
     override fun close() {
         if (!running.getAndSet(false)) return
+        if (imuEnabled) runCatching { send(VitureBeastProtocol.command(0x0301, byteArrayOf(0, 0))) }
         workers.forEach(Thread::interrupt); workers.forEach { if (Thread.currentThread() !== it) it.join(1200) }
         ports.forEach { usb.release(it.usbInterface) }
         usb.close()
+    }
+
+    private companion object {
+        const val CALIBRATION_GYRO_TEMPERATURE = 0x3302
+        const val CALIBRATION_IMU = 0x3303
+        const val CALIBRATION_MAGNETOMETER = 0x3304
+        const val CALIBRATION_ACCELEROMETER_TEMPERATURE = 0x3305
+        const val CALIBRATION_MAGNETOMETER_TEMPERATURE = 0x3306
+        const val CALIBRATION_SEGMENT_HEADER_SIZE = 5
+        const val CALIBRATION_PACKET_HEADER_SIZE = 8
+        const val CALIBRATION_READ_TIMEOUT_MS = 90
+        const val CALIBRATION_RESPONSE_TIMEOUT_NANOS = 2_000_000_000L
+        const val HOST_CALIBRATION_PROGRESS_INTERVAL = 100
+        const val MAX_CALIBRATION_SEGMENTS = 1_024
+        const val STANDARD_GRAVITY = 9.80665f
     }
 }
