@@ -7,6 +7,8 @@ import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
+import com.taowen.arglass.ImuTrackingSupport
+import com.taowen.arglass.driver.xreal.xbx.XrealXbxCalibration
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.GlassesDriver
 import com.taowen.arglass.driver.xreal.xbx.XrealXbxModel
@@ -30,6 +32,7 @@ internal object XrealXbxA01Driver : GlassesDriver {
                 it.layout == GlassesDisplayLayout.FULL_SBS_3D && it.refreshRateHz == 60
             },
             showInArctrlDisplayModeToggle = true,
+            imuTrackingSupport = ImuTrackingSupport(9, XrealXbxCalibration.FACTORY_CALIBRATION),
         ) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,

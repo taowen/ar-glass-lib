@@ -1,6 +1,11 @@
 package com.taowen.arglass.driver.xreal.xbx
 
+import com.taowen.arglass.ImuCalibrationData
+import com.taowen.arglass.ImuCalibrationLevel
+import com.taowen.arglass.ImuCalibrationSource
+import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuSample
+import com.taowen.arglass.TemperatureGyroscopeBias
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
@@ -13,6 +18,18 @@ internal class XrealXbxCalibration private constructor(
     private val magnetometerBias: FloatArray,
     val noiseSigmas: FloatArray,
 ) {
+    fun publicData(): ImuCalibrationData = ImuCalibrationData(
+        source = ImuCalibrationSource.DEVICE_FACTORY,
+        state = FACTORY_CALIBRATION,
+        accelerometerBiasMetersPerSecondSquared = sensorToRuntime(accelerometerBias),
+        gyroscopeBiasRadiansPerSecond = sensorToRuntime(factoryGyroscopeBias),
+        magnetometerBias = sensorToRuntime(magnetometerBias),
+        gyroscopeTemperatureBiases = gyroscopeBiasByTemperature.map {
+            TemperatureGyroscopeBias(it.temperatureCelsius, sensorToRuntime(it.bias))
+        },
+        noiseStandardDeviations = noiseSigmas.copyOf(),
+    )
+
     fun calibrate(sample: ImuSample): ImuSample {
         val temperatureBias = gyroscopeBiasByTemperature.minByOrNull {
             abs(it.temperatureCelsius - sample.temperatureCelsius)
@@ -43,6 +60,7 @@ internal class XrealXbxCalibration private constructor(
                 mappedGyroscopeBias,
             ),
             magneticField = magneticField,
+            calibration = FACTORY_CALIBRATION,
         )
     }
 
@@ -52,6 +70,12 @@ internal class XrealXbxCalibration private constructor(
     )
 
     companion object {
+        val FACTORY_CALIBRATION = ImuCalibrationState(
+            accelerometer = ImuCalibrationLevel.FACTORY,
+            gyroscope = ImuCalibrationLevel.FACTORY,
+            magnetometer = ImuCalibrationLevel.FACTORY,
+        )
+
         fun parse(bytes: ByteArray): XrealXbxCalibration {
             val json = JSONObject(bytes.toString(Charsets.UTF_8).trimEnd('\u0000'))
             val imu = json.getJSONObject("IMU").getJSONObject("device_1")

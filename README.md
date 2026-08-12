@@ -14,7 +14,8 @@ Supported models:
 - **XREAL One** (`3318:0438`, GF)
 - **XREAL Light** (`0486:573C` MCU + `05A9:0680` OV580)
 - **Grawoow G530 / MetaVision M53** (`1FF7:0FF4` MCU + `05A9:0F87` OV580)
-- **RayNeo Air 3S Pro** (`1BBB:AF50`, open HID IMU)
+- **RayNeo Air 3 / Air 3s / Air 3s Pro / Air 4 / Air 4 Pro**
+  (`1BBB:AF50`, common open nine-axis HID IMU)
 - **VITURE Luma** (`35CA:1131`, open Gen2 RAW IMU)
 - **VITURE Luma Pro** (`35CA:1121` and `35CA:1141`, open Gen2 RAW IMU)
 - **VITURE Luma Cyber** (`35CA:1151`, open Gen2 RAW IMU)
@@ -26,6 +27,8 @@ Supported models:
 
 - Identify the glasses model from Android USB Host descriptors.
 - Read versioned XREAL IMU reports (acceleration, angular velocity, magnetic field, temperature, and device timestamp).
+- Declare whether a model supplies six- or nine-axis tracking and the calibration level of each sensor.
+- Keep factory calibration acquisition and application inside the driver while exposing the applied SI-unit parameters through `onImuCalibration` for diagnostics.
 - Query and switch 2D, Half SBS, Full SBS, and high-refresh SBS display modes.
 - List and switch glasses-native display profiles using common width, height, refresh-rate, and 2D/3D layout metadata while keeping each vendor's protocol value inside its driver.
 - Expose capability metadata for host apps that need to correlate glasses models with Android external-display information.
@@ -146,7 +149,24 @@ val profile = connected.model.supportedDisplayProfiles.firstOrNull {
 if (profile != null) session.setDisplayProfile(profile)
 ```
 
-`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time.
+`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time; `hostTimestampNanos` is captured immediately after the USB read so latency-sensitive consumers do not have to timestamp a delayed callback. `calibration` states which corrections the driver has already applied. `onImuCalibration` exposes those applied parameters for inspection, but consumers must not apply them a second time.
+
+XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer bias, factory and temperature-indexed gyroscope biases, magnetometer bias, and noise values, then restart streaming. Selection of the nearest temperature point, bias subtraction, SI units, and sensor-to-runtime axis mapping all remain inside the XBX driver.
+
+RayNeo Air 3/4-family sessions query device information before streaming and honor
+its `magnet_valid` flag. Command replies use report type `0xc8` and echo the
+requested command at byte 8; command `0x3c` then supplies the 3×3 sensor
+correction and accelerometer offset used by the vendor runtime. The driver
+applies these parameters, converts angular velocity from degrees/s to rad/s,
+and exposes the applied matrix and offset through `onImuCalibration`. In the
+local Taurus 3.0 Pro firmware dated May 21 2025, `0x3c` is an identity matrix
+plus a zero offset. Its 48-byte response contains no magnetic calibration. The
+driver therefore
+collects magnetic extrema while the user rotates the glasses around all three
+axes, fits hard-iron bias plus diagonal soft-iron scale, publishes a second
+`MIXED` calibration event, and marks magnetic samples `HOST_ESTIMATED` only
+after that fit succeeds. Device ticks are 100 µs and are exported as
+nanoseconds without replacing the separate host receive timestamp.
 
 ## White-box native integration
 
@@ -193,13 +213,44 @@ unrelated glasses.
 - One/Lite/Pro expose SDK pose callbacks but do not yet have a cross-verified
   open raw-IMU implementation. Luma Ultra uses the proprietary Carina path.
 
-## RayNeo Air 3S Pro protocol notes
+## RayNeo Air 3/4-family protocol notes
 
 - XRLinuxDriver identifies the device as `1BBB:AF50`; its full display and pose
   implementation calls the proprietary `libRayNeoXRMiniSDK.so`.
-- The open backend sends HID command `66 01` and decodes the independently
-  captured `99 65` acceleration, angular velocity, magnetic field, temperature,
-  and timestamp report. It therefore advertises IMU support only in the standalone APK.
+- The open backend sends HID commands `66 00`, `66 3c`, and `66 01`. Device-info
+  and calibration replies are `99 c8` command ACKs; `99 65` is the direct
+  64-byte sensor report containing acceleration, angular velocity, magnetic
+  field, temperature, and timestamp. It therefore advertises IMU support only
+  in the standalone APK.
+- The Taurus 3.0 Pro firmware scales accelerometer samples to m/s², gyroscope
+  samples to degrees/s, leaves magnetometer samples unscaled, and uses 100 µs
+  device ticks. It also performs an internal stationary gyroscope-bias estimate;
+  there is no corresponding USB magnetic-calibration command in this firmware.
+- Local Taurus 2.0, 3.0, 3.0 Pro, and 4.0 firmware all contain this same
+  sensor report, ACK layout, scaling, and 48-byte `0x3c` identity/zero response.
+  Their device-info board IDs are `0x35` (Air 3), `0x36` (Air 3s), `0x37`
+  (Air 3s Pro), and `0x39`/`0x3a` (Air 4 family). Because Air 4 and Air 4 Pro
+  share one firmware, that firmware does not establish which of the last two
+  board IDs is which public model.
+- All five models share runtime USB identity `1BBB:AF50`. Before opening the
+  device, Android descriptors identify only an Air 3 group, Air 4 group, or
+  generic family name. The driver reports the more precise board-ID result
+  after the device-info ACK arrives.
+- The locally available Air 1s, Air Plus, Air 2, and Air 2s firmware payloads
+  do not expose an unpacked, verifiable `99 65` sensor layout or the
+  `99 c8`/`0x3c` calibration path found in the newer firmware, so this library
+  does not advertise a raw-IMU driver for them.
+- The local GT/GT MAX package contains an internal DOF implementation but no
+  verified host USB raw-IMU or calibration protocol, so no GT driver is
+  advertised either.
+- `AirSDK XR Unity v1.0.3` confirms the older client-side command numbers
+  `0x00` (device info), `0x01`/`0x02` (sensor on/off), `0x03` (device-side
+  gyroscope calibration), and a `0x65` sensor callback. It contains no VID/PID
+  or model table: the AAR delegates USB enumeration and transport to the
+  separately installed `com.tcl.xrmanager.main` service. It exposes no factory
+  calibration data and its 2022 sensor-field layout differs from the Taurus
+  2.0+ firmware, so it is not sufficient evidence for an older-model raw-IMU
+  driver.
 - XRLinuxDriver ships the RayNeo SDK only for x86_64, so it cannot be used in
   this Android ARM64 library. 2D/3D is intentionally not advertised until that
   SDK behavior has an open protocol implementation.

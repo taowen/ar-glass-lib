@@ -93,6 +93,7 @@ internal class XrealXbxSession(
             status("正在读取 ${model.displayName} IMU 校准")
             usb.imu(0x19, byteArrayOf(0))
             imuCalibration = readCalibration()
+            executor.execute { listener.onImuCalibration(requireNotNull(imuCalibration).publicData()) }
             check(usb.imu(0x1a).isNotEmpty()) { "IMU sync failed" }
             check(usb.imu(0x19, byteArrayOf(1)).isNotEmpty()) { "IMU start failed" }
             status("${model.displayName} IMU 已启动")

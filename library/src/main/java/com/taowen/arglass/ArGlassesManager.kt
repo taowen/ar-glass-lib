@@ -29,6 +29,7 @@ interface ArGlassesListener {
     fun onDevicesChanged(devices: List<ConnectedGlasses>) {}
     fun onPermissionResult(device: ConnectedGlasses, granted: Boolean) {}
     fun onStatus(message: String) {}
+    fun onImuCalibration(calibration: ImuCalibrationData) {}
     fun onImuSample(sample: ImuSample) {}
 }
 
@@ -66,6 +67,14 @@ class ArGlassesManager(
         override fun onStatus(message: String) {
             ArGlassesDiagnostics.recordEvent("status $message")
             listener.onStatus(message)
+        }
+
+        override fun onImuCalibration(calibration: ImuCalibrationData) {
+            ArGlassesDiagnostics.recordEvent(
+                "imu calibration source=${calibration.source} state=${calibration.state} " +
+                    "temperaturePoints=${calibration.gyroscopeTemperatureBiases.size}",
+            )
+            listener.onImuCalibration(calibration)
         }
 
         override fun onImuSample(sample: ImuSample) {
@@ -153,6 +162,16 @@ class ArGlassesManager(
         return ArGlassesSession(device, model, driverSession).also { session = it }
     }
 
+    fun open(glasses: ConnectedGlasses, feature: SessionFeature = SessionFeature.ALL): ArGlassesSession {
+        require(glasses.devices.all(usbManager::hasPermission)) {
+            "USB permission has not been granted for every glasses component"
+        }
+        require(ArGlassesCatalog.identify(glasses.device)?.id == glasses.model.id) {
+            "Connected glasses changed before the session was opened"
+        }
+        return open(glasses.device, feature)
+    }
+
     fun externalDisplayResolutions(): List<DisplayResolution> =
         appContext.getSystemService(DisplayManager::class.java).getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
             .filter { it.displayId != Display.DEFAULT_DISPLAY }
@@ -219,6 +238,14 @@ class ArGlassesSession internal constructor(
         return delegate.setDisplayProfile(profile).also {
             ArGlassesDiagnostics.recordEvent("set display profile result model=${model.id} profile=${profile.id} ok=$it")
         }
+    }
+
+    fun setDisplayProfile(request: GlassesDisplayRequest): Boolean {
+        val profile = requireNotNull(model.supportedDisplayProfiles.firstOrNull {
+            it.width == request.width && it.height == request.height &&
+                it.refreshRateHz == request.refreshRateHz && it.layout == request.layout
+        }) { "${model.displayName} does not declare display profile $request" }
+        return setDisplayProfile(profile)
     }
     override fun close() {
         ArGlassesDiagnostics.recordEvent("close session model=${model.id}")
