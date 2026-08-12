@@ -23,6 +23,8 @@ Supported models:
 - **Rokid glasses** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, `2002`, and `2180`; product string supplies the market name)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
+- **GOOVIS G3 family**: G3 Max (`880A:3501`), A1 (`880A:3502`),
+  G3X (`880A:3503`), and G3X Pro (`880A:3506`)
 
 ## Capabilities
 
@@ -270,6 +272,32 @@ unrelated glasses.
 - USB identities: VID `0x2C30`, PID `0x1030` or `0x1031`.
 - 2D/3D switching uses a 64-byte HID Feature Report (`SET_REPORT`, value `0x0302`).
 - The LUCI driver exposes display-mode checks. It does not advertise IMU because this protocol does not provide a verified LUCI sensor stream.
+
+## GOOVIS G3-family protocol notes
+
+- D4 firmware recognizes VID `0x880A` with PID `0x3501` (internally G3),
+  `0x3502` (A1), `0x3503` (G3X), and `0x3506` (G3XP). GOOVIS's current public
+  product SKUs identify these as G3 Max, A1, G3X, and G3X Pro respectively.
+- G3 Max uses dual 2560×1440 (2.5K) Micro-OLED panels. Its model metadata
+  therefore declares 2560×1440 mono and 5120×1440 combined Full SBS layouts;
+  G3X and G3X Pro use dual 1920×1080 panels. The G3 Max hardware supports up
+  to 120 Hz, but this HID command does not select refresh rate, so the layout
+  profiles retain the conservative 60 Hz timing until a physical EDID capture
+  establishes the exact high-refresh input modes.
+- One class-3 HID interface supplies interrupt IN and OUT endpoints. The driver
+  sends 24-byte `AA 55 55 AA` output reports and accepts the normal 18-byte
+  sensor input even though the HID descriptor declares 24 bytes.
+- Display group `0` selects 2D with value `1` or side-by-side 3D with value `0`.
+  Top/bottom is deliberately not exposed. This command changes content layout;
+  it does not make the source select the profile's native resolution, refresh
+  rate, or pixel clock. The host must independently select a matching EDID mode.
+- IMU group `1` starts/stops the six-axis stream. Samples are batch-averaged
+  acceleration and angular velocity with byte 12 carrying the batch duration in
+  milliseconds. The driver converts them to m/s² and rad/s and accumulates that
+  duration as the device timestamp.
+- No magnetometer, factory calibration, quaternion, or absolute device clock is
+  exposed by the recovered protocol, so tracking support is declared as
+  uncalibrated six-axis IMU.
 
 ## XREAL Air 2 Ultra protocol notes
 

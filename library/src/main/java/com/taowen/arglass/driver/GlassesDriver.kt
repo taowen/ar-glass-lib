@@ -8,6 +8,7 @@ import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.viture.beast.VitureBeastDriver
+import com.taowen.arglass.driver.goovis.g3family.GoovisG3FamilyDriver
 import com.taowen.arglass.driver.luci.LuciDriver
 import com.taowen.arglass.driver.rokid.air.RokidAirDriver
 import com.taowen.arglass.driver.xreal.air2ultra.XrealAir2UltraDriver
@@ -101,6 +102,7 @@ internal object GlassesDriverRegistry {
         RokidAirDriver,
         VitureBeastDriver,
         LuciDriver,
+        GoovisG3FamilyDriver,
     )
 
     fun identify(device: UsbDevice): GlassesModel? = drivers.firstNotNullOfOrNull { it.identify(device) }
