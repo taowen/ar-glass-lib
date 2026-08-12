@@ -11,6 +11,7 @@ import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.xreal.XrealMcuDisplayModeProtocol
 import com.taowen.arglass.driver.xreal.XrealNativeUsbSession
 import com.taowen.arglass.driver.xreal.decodeXrealImuReport
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
@@ -34,6 +35,7 @@ internal class XrealXbxSession(
     private var heartbeatThread: Thread? = null
     private val imuThread = if (imuEnabled) Thread(::runImu, "${model.id}-imu") else null
     @Volatile private var mcuReady = false
+    @Volatile private var imuCalibration: XrealXbxCalibration? = null
 
     init { imuThread?.start() }
 
@@ -90,12 +92,13 @@ internal class XrealXbxSession(
             ensureMcuReady()
             status("正在读取 ${model.displayName} IMU 校准")
             usb.imu(0x19, byteArrayOf(0))
-            readCalibration()
+            imuCalibration = readCalibration()
             check(usb.imu(0x1a).isNotEmpty()) { "IMU sync failed" }
             check(usb.imu(0x19, byteArrayOf(1)).isNotEmpty()) { "IMU start failed" }
             status("${model.displayName} IMU 已启动")
             while (running.get()) {
                 usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)
+                    ?.let { sample -> imuCalibration?.calibrate(sample) ?: sample }
                     ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Throwable) {
@@ -103,20 +106,26 @@ internal class XrealXbxSession(
         }
     }
 
-    private fun readCalibration() {
+    private fun readCalibration(): XrealXbxCalibration {
         val length = usb.imu(0x14)
         val expected = if (length.size >= 12) ByteBuffer.wrap(length, 8, 4).order(ByteOrder.LITTLE_ENDIAN).int else 0
         check(expected in 1..128 * 1024) { "Invalid IMU calibration length $expected" }
-        var received = 0
-        while (running.get() && received < expected) {
+        val calibrationBytes = ByteArrayOutputStream(expected)
+        while (running.get() && calibrationBytes.size() < expected) {
             val part = usb.imu(0x15)
             if (part.size < 8) break
             val bytes = ((part[5].toInt() and 0xff) or ((part[6].toInt() and 0xff) shl 8)) - 3
             if (bytes <= 0) break
-            received += bytes
+            val available = minOf(bytes, part.size - 8, expected - calibrationBytes.size())
+            if (available <= 0) break
+            calibrationBytes.write(part, 8, available)
         }
-        check(received >= expected) { "Incomplete IMU calibration $received/$expected" }
-        status("IMU 校准数据：$received / $expected bytes")
+        check(calibrationBytes.size() >= expected) {
+            "Incomplete IMU calibration ${calibrationBytes.size()}/$expected"
+        }
+        val calibration = XrealXbxCalibration.parse(calibrationBytes.toByteArray())
+        status("IMU 校准数据：${calibrationBytes.size()} / $expected bytes；已应用温漂和三轴偏置")
+        return calibration
     }
 
     private fun mcuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray {
