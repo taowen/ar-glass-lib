@@ -107,10 +107,13 @@ bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
                         mag_divisor;
             }
         }
-    } else {
+    } else if (b[62] != 0) {
         // Version 2 uses a different magnetic encoding from gyro/accel: the
         // multiplier and divisor are big-endian, and each sample stores its
-        // sign bit XOR 0x80 in the high byte.
+        // sign bit XOR 0x80 in the high byte. Byte 62 is the freshness flag;
+        // the three magnetic words remain populated between 100 Hz samples,
+        // but forwarding those stale words as new measurements would make the
+        // fusion filter update them at the roughly 1 kHz report rate.
         const auto mag_multiplier = read_be_i16(b, 42);
         const auto mag_divisor = read_be_i32(b, 44);
         if (mag_divisor != 0) {
