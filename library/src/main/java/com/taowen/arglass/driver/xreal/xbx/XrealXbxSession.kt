@@ -98,7 +98,15 @@ internal class XrealXbxSession(
             check(usb.imu(0x19, byteArrayOf(1)).isNotEmpty()) { "IMU start failed" }
             status("${model.displayName} IMU 已启动")
             while (running.get()) {
-                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)
+                usb.readImu()?.takeIf { it.size == 64 }?.let { report ->
+                    // Match the selected NR 3.1 receiver: capture the Android
+                    // monotonic arrival clock at the USB boundary, before
+                    // report decoding and factory calibration add latency.
+                    val hostArrivalTimeNanos = SystemClock.elapsedRealtimeNanos()
+                    decodeXrealImuReport(report)?.copy(
+                        hostTimestampNanos = hostArrivalTimeNanos,
+                    )
+                }
                     ?.let { sample -> imuCalibration?.calibrate(sample) ?: sample }
                     ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
