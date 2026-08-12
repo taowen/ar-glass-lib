@@ -6,6 +6,9 @@ import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.ImuCalibrationLevel
+import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.GlassesDriver
@@ -33,4 +36,12 @@ internal fun model(id: String, name: String, pid: Int, profiles: List<com.taowen
     preferred2dDisplayProfile = profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
     preferred3dDisplayProfile = profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
     showInArctrlDisplayModeToggle = true,
+    imuTrackingSupport = ImuTrackingSupport(
+        axisCount = 6,
+        calibration = ImuCalibrationState(
+            accelerometer = ImuCalibrationLevel.FACTORY,
+            gyroscope = ImuCalibrationLevel.FACTORY,
+            magnetometer = ImuCalibrationLevel.NONE,
+        ),
+    ),
 )

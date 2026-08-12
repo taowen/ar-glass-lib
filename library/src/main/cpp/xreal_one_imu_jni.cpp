@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -19,10 +20,12 @@
 #include <unistd.h>
 
 namespace {
+// 0x2836 is the IMU notification command and the following big-endian uint32
+// is the payload size. The firmware sends the complete 0x80-byte
+// NRImuSubmitExt carrier, so the wire frame is 6 + 128 bytes, not 84 bytes.
 constexpr std::array<std::uint8_t, 6> kHeader = {0x28, 0x36, 0x00, 0x00, 0x00, 0x80};
-constexpr std::array<std::uint8_t, 6> kMarker = {0x00, 0x40, 0x1f, 0x00, 0x00, 0x40};
-constexpr std::size_t kFrameSize = 84;
-constexpr std::size_t kSampleSize = 36;
+constexpr std::size_t kFrameSize = 6 + 0x80;
+constexpr std::size_t kSampleSize = 52;
 
 template <typename T>
 T read_le(const std::uint8_t* data) {
@@ -39,6 +42,9 @@ struct XrealOneSample {
     std::uint64_t timestamp_nanos = 0;
     std::array<float, 3> acceleration{};
     std::array<float, 3> gyro{};
+    std::array<float, 3> magnetic{};
+    float temperature = std::numeric_limits<float>::quiet_NaN();
+    bool magnetic_valid = false;
 };
 
 class ScopedFd {
@@ -145,13 +151,6 @@ private:
             if (header != pending_.begin()) pending_.erase(pending_.begin(), header);
             if (pending_.size() < kFrameSize) return false;
 
-            const bool marker_found = std::search(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(kFrameSize),
-                                                  kMarker.begin(), kMarker.end()) != pending_.begin() + static_cast<std::ptrdiff_t>(kFrameSize);
-            if (!marker_found) {
-                pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(kHeader.size()));
-                continue;
-            }
-
             XrealOneSample decoded{};
             if (!decode_frame(pending_.data(), decoded)) {
                 pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(kHeader.size()));
@@ -170,6 +169,9 @@ private:
         const float ax = read_le<float>(frame + 46);
         const float ay = read_le<float>(frame + 50);
         const float az = read_le<float>(frame + 54);
+        const float mx = read_le<float>(frame + 58);
+        const float my = read_le<float>(frame + 62);
+        const float mz = read_le<float>(frame + 66);
         const std::array<float, 6> values = {gx, gy, gz, ax, ay, az};
         if (std::any_of(values.begin(), values.end(), [](float v) { return !std::isfinite(v); })) return false;
         const float accel_norm = std::sqrt(ax * ax + ay * ay + az * az);
@@ -179,6 +181,11 @@ private:
         out.timestamp_nanos = read_le<std::uint64_t>(frame + 14);
         out.acceleration = {-ax, -az, -ay};
         out.gyro = {-gx, -gz, -gy};
+        const std::uint32_t data_mask = read_le<std::uint32_t>(frame + 30);
+        out.magnetic_valid = (data_mask & 0x4U) != 0U &&
+                std::isfinite(mx) && std::isfinite(my) && std::isfinite(mz);
+        if (out.magnetic_valid) out.magnetic = {-mx, -mz, -my};
+        out.temperature = read_le<float>(frame + 70);
         return true;
     }
 
@@ -201,8 +208,19 @@ jbyteArray to_sample_array(JNIEnv* env, const XrealOneSample& sample) {
     write_bytes(bytes.data(), 0, &sample.timestamp_nanos, sizeof(sample.timestamp_nanos));
     write_bytes(bytes.data(), 8, sample.acceleration.data(), sample.acceleration.size() * sizeof(float));
     write_bytes(bytes.data(), 20, sample.gyro.data(), sample.gyro.size() * sizeof(float));
+    if (sample.magnetic_valid) {
+        write_bytes(bytes.data(), 32, sample.magnetic.data(), sample.magnetic.size() * sizeof(float));
+    } else {
+        const std::array<float, 3> missing = {
+            std::numeric_limits<float>::quiet_NaN(),
+            std::numeric_limits<float>::quiet_NaN(),
+            std::numeric_limits<float>::quiet_NaN(),
+        };
+        write_bytes(bytes.data(), 32, missing.data(), missing.size() * sizeof(float));
+    }
+    write_bytes(bytes.data(), 44, &sample.temperature, sizeof(sample.temperature));
     const std::int32_t version = 1;
-    write_bytes(bytes.data(), 32, &version, sizeof(version));
+    write_bytes(bytes.data(), 48, &version, sizeof(version));
     auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()), reinterpret_cast<const jbyte*>(bytes.data()));
     return result;

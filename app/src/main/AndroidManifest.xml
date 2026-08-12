@@ -13,6 +13,7 @@
         </provider>
         <activity android:name=".ImuCheckActivity" android:exported="false" />
         <activity android:name=".RayneoMagneticCalibrationActivity" android:exported="false" />
+        <activity android:name=".XrealMagneticCalibrationActivity" android:exported="false" />
         <activity android:name=".DisplayModeCheckActivity" android:exported="false" />
         <activity android:name=".DisplayProfileSwitchActivity" android:exported="false" />
         <activity android:name=".CameraCheckActivity" android:exported="false" />

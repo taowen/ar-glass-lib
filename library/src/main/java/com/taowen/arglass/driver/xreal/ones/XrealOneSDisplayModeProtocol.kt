@@ -7,16 +7,16 @@ import com.taowen.arglass.driver.xreal.onefamily.XrealOneDisplayModeCommand
 import com.taowen.arglass.driver.xreal.onefamily.XrealOneDisplayProfileEntry
 import com.taowen.arglass.driver.xreal.onefamily.xrealOneDisplayProfile
 
-/** GS/One S declares its own profile list; EDID 5/inputMode 1 was verified on One S hardware. */
+/** GS/XREAL 1S declares its own profile list; EDID 5/inputMode 1 was verified on XREAL 1S hardware. */
 internal object XrealOneSDisplayModeProtocol : XrealOneDpDisplayModeProtocol {
     private const val EDID_3D_3840_1080_60HZ = 5
-    private const val EDID_2D_1920_1080_90HZ = 9
+    private const val EDID_2D_1920_1200_90HZ = 9
     override val requireInputModeReadback = false
     override val inputModeWriteAttempts = 3
 
     private val profileTable = listOf(
         profile(EDID_3D_3840_1080_60HZ, inputMode = 1, 3840, 1080, 60, GlassesDisplayLayout.FULL_SBS_3D),
-        profile(EDID_2D_1920_1080_90HZ, inputMode = 0, 1920, 1080, 90, GlassesDisplayLayout.MONO_2D),
+        profile(EDID_2D_1920_1200_90HZ, inputMode = 0, 1920, 1200, 90, GlassesDisplayLayout.MONO_2D),
     )
 
     override val profiles: List<GlassesDisplayProfile> = profileTable.map(XrealOneDisplayProfileEntry::profile)

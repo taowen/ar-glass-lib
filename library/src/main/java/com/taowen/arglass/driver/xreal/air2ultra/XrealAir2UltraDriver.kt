@@ -6,6 +6,9 @@ import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.ImuCalibrationLevel
+import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.GlassesDriver
@@ -27,6 +30,14 @@ internal object XrealAir2UltraDriver : GlassesDriver {
                 it.layout == GlassesDisplayLayout.FULL_SBS_3D && it.refreshRateHz == 72
             },
             showInArctrlDisplayModeToggle = true,
+            imuTrackingSupport = ImuTrackingSupport(
+                axisCount = 9,
+                calibration = ImuCalibrationState(
+                    accelerometer = ImuCalibrationLevel.FACTORY,
+                    gyroscope = ImuCalibrationLevel.FACTORY,
+                    magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
+                ),
+            ),
         ) else null
 
     override fun open(

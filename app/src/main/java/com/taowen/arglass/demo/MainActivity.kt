@@ -43,7 +43,7 @@ class MainActivity : Activity(), ArGlassesListener {
         val glasses = devices.firstOrNull()
         val usbDevices = getSystemService(UsbManager::class.java).deviceList.values
         if (glasses == null) {
-            status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One / One S、Rokid Air / Max、VITURE Beast、LUCI"
+            status.text = "请通过 USB-C 插入 AR 眼镜\n\n支持：XREAL Air 2 Ultra / XBX A01 / XBX A01 Plus / One / 1S、Rokid Air / Max、VITURE Beast、LUCI"
             content.addView(Button(this).apply { text = "重新扫描"; setOnClickListener { manager.scan() } }, margins(top = 20))
             if (usbDevices.any(XrealEyeCameraCatalog::identifyOneFamilyMain)) {
                 addCheckButton("XREAL One EDID/input 读取", XrealOneDpStateActivity::class.java)
@@ -61,6 +61,11 @@ class MainActivity : Activity(), ArGlassesListener {
         if (GlassesCapability.IMU in glasses.model.capabilities) addCheckButton("IMU 检测", ImuCheckActivity::class.java)
         if (glasses.model.id.startsWith("rayneo_")) {
             addCheckButton("RayNeo 磁力计校准", RayneoMagneticCalibrationActivity::class.java)
+        }
+        if (glasses.model.id == "xreal_air_2_ultra" ||
+            glasses.model.id == "xreal_one" || glasses.model.id == "xreal_one_pro" || glasses.model.id == "xreal_one_s"
+        ) {
+            addCheckButton("XREAL 磁力计校准", XrealMagneticCalibrationActivity::class.java)
         }
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities) addCheckButton("开启 / 关闭 3D", DisplayModeCheckActivity::class.java)
         if (GlassesCapability.DISPLAY_MODE in glasses.model.capabilities && glasses.model.supportedDisplayProfiles.isNotEmpty()) {

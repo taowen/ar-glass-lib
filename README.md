@@ -10,7 +10,7 @@ Supported models:
 - **XREAL Air 2 Ultra** (`3318:0426`, Flora)
 - **XREAL XBX A01** (`3318:0440`, Helen)
 - **XREAL XBX A01 Plus** (`3318:0442`, Helen Pro)
-- **XREAL One S** (`3318:043E`, GS)
+- **XREAL 1S** (`3318:043E`, GS)
 - **XREAL One** (`3318:0438`, GF)
 - **XREAL Light** (`0486:573C` MCU + `05A9:0680` OV580)
 - **Grawoow G530 / MetaVision M53** (`1FF7:0FF4` MCU + `05A9:0F87` OV580)
@@ -79,7 +79,7 @@ Each `GlassesModel` explicitly declares `preferred2dDisplayProfile`,
 only Arctrl home-screen UI policy for the 2D/3D toggle. It is intentionally
 separate from `DISPLAY_MODE` and `supportedDisplayProfiles`, so the standalone
 diagnostic APK can keep developer mode checks even when Arctrl should hide the
-product button. XREAL One, One Pro, and One S currently set this flag to
+product button. XREAL One, One Pro, and XREAL 1S currently set this flag to
 `false`.
 
 When adding or correcting a glasses protocol, cross-check every available
@@ -365,15 +365,16 @@ where the transport is native-backed.
 
 ## XREAL One family protocol notes
 
-- Runtime USB identities: One Pro `3318:0436` (Gina, official type 41), One `3318:0438` (GF, official type 47), and One S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
+- Runtime USB identities: One Pro `3318:0436` (Gina, official type 41), One `3318:0438` (GF, official type 47), and XREAL 1S `3318:043E` (GS, official type 71). Adjacent odd PIDs are bootloaders and are not opened as runtime devices.
 - One-family 2D/3D switching is not the old XREAL USB MCU path. Control My
   Glasses 1.1.0 uses the USB-Ethernet DP RPC service at `169.254.2.1:52999`.
   Verified packets are `0x275e` get current EDID, `0x275f` set current EDID,
   `0x2821` get DP input mode, and `0x2822` set DP input mode.
-  `EDID=5 + inputMode=1` switches XREAL One and One S to `3840x1080@60`
+  `EDID=5 + inputMode=1` switches XREAL One and XREAL 1S to `3840x1080@60`
   Full SBS 3D;
-  `EDID=9 + inputMode=0` restores
-  `1920x1080@90` 2D. These are the only One-family profiles exposed through
+  `EDID=9 + inputMode=0` restores `1920x1080@90` 2D on One/One Pro; the GS
+  firmware configuration identifies the corresponding XREAL 1S mono mode as
+  `1920x1200@90`. These are the only One-family profiles exposed through
   `supportedDisplayProfiles`; additional EDID values are kept out of the public
   profile list until they are verified from hardware captures or open drivers.
 - Do not treat Android seeing `3840x1080` as a complete 3D switch. That only
@@ -382,10 +383,10 @@ where the transport is native-backed.
   the composed image in the glasses. The library now verifies both EDID and DP
   input mode, and will resend only `0x2822` when EDID is correct but input mode
   is not.
-- One, One Pro, and One S each provide their own EDID profile object and profile
+- One, One Pro, and XREAL 1S each provide their own EDID profile object and profile
   ID prefix. The TCP DP transport is shared; the user-visible profile list is
   not. Hardware captures currently verify EDID 5/inputMode 1 for XREAL One and
-  One S `3840x1080@60` Full SBS 3D; additional per-model EDID profiles should
+  XREAL 1S `3840x1080@60` Full SBS 3D; additional per-model EDID profiles should
   be added only after model-specific hardware captures or open-driver evidence.
 - The standalone check APK includes a read-only "XREAL One EDID/input" activity.
   Users can first switch the glasses to a desired state with vendor tools or the
@@ -394,10 +395,17 @@ where the transport is native-backed.
   the intended path for adding model-specific EDID mappings that are not already
   verified.
 - IMU is intentionally separate from Air/Flora/Helen HID code. It connects through the glasses' USB Ethernet link at `169.254.2.1:52998`.
-- The JNI TCP reader follows XRLinuxDriver's vendored `xreal_one_driver`: find
-  header `28 36 00 00 00 80`, require marker `00 40 1F 00 00 40`, reassemble
-  84-byte frames, and expose acceleration, angular velocity, and the device
-  timestamp in Android-oriented coordinates.
+- The JNI TCP reader treats `28 36` as notification command `0x2836` and
+  `00 00 00 80` as its big-endian payload length. It therefore reassembles the
+  complete 134-byte wire frame (6-byte envelope plus the firmware's 0x80-byte
+  `NRImuSubmitExt` carrier), including acceleration, angular velocity,
+  magnetometer, temperature, validity mask and device timestamp. The older
+  XRLinuxDriver reader stopped at 84 bytes and consequently discarded the
+  magnetic and trailing calibration metadata.
+- One-family acceleration and angular velocity arrive after the glasses-side
+  factory pipeline. Magnetic samples are additionally passed through the
+  library's persisted host hard/soft-iron ellipsoid calibration, with magnetic
+  disturbance rejection and an explicit reset/progress API.
 - XRLinuxDriver notes that One/One Pro/1S require latest firmware and glasses
   stabilizer/anchor features disabled. Those prerequisites apply to the IMU
   path; they do not by themselves define an open 2D/3D switching protocol.

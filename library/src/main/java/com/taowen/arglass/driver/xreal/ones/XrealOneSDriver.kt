@@ -7,6 +7,9 @@ import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.ImuCalibrationLevel
+import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.GlassesDriver
@@ -20,12 +23,20 @@ internal object XrealOneSDriver : GlassesDriver {
 
     override fun identify(device: UsbDevice): GlassesModel? = if (device.vendorId == VID && device.productId == PID)
         GlassesModel(
-            id, "XREAL", "One S", VID, PID,
+            id, "XREAL", "1S", VID, PID,
             setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION, GlassesCapability.CAMERA),
             id,
             supportedDisplayProfiles = XrealOneSDisplayModeProtocol.profiles,
             preferred2dDisplayProfile = XrealOneSDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
             preferred3dDisplayProfile = XrealOneSDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
+            imuTrackingSupport = ImuTrackingSupport(
+                9,
+                ImuCalibrationState(
+                    ImuCalibrationLevel.FACTORY,
+                    ImuCalibrationLevel.FACTORY,
+                    ImuCalibrationLevel.HOST_ESTIMATED,
+                ),
+            ),
         ) else null
 
     override fun open(

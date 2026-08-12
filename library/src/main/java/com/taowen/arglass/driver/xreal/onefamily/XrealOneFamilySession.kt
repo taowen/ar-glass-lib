@@ -10,9 +10,18 @@ import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.ImuSample
+import com.taowen.arglass.ImuCalibrationData
+import com.taowen.arglass.ImuCalibrationLevel
+import com.taowen.arglass.ImuCalibrationSource
+import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuHostCalibrationPhase
 import com.taowen.arglass.NativeBridge
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
+import com.taowen.arglass.driver.rayneo.RayneoMagneticCalibrationStore
+import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibration
+import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibrator
+import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticUpdate
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executor
@@ -34,8 +43,23 @@ internal class XrealOneFamilySession(
         GlassesCapability.DISPLAY_MODE in model.capabilities
     private val imuEnabled = feature == SessionFeature.IMU || feature == SessionFeature.ALL
     private val imuThread = if (imuEnabled) Thread(::readEthernetImu, "xreal-one-s-tcp-imu") else null
+    private val magneticCalibrator = RayneoMagneticCalibrator()
+    private val calibrationStoreKey = "xreal:${model.id}:" + (
+        runCatching { device.serialNumber }.getOrNull()?.takeIf(String::isNotBlank)
+            ?: "${device.vendorId}:${device.productId}:${device.productName.orEmpty()}"
+        )
+    @Volatile private var magneticCalibration: RayneoMagneticCalibration? = null
+    private var lastProgressSamples = -PROGRESS_INTERVAL
+    private var lastProgressPhase: ImuHostCalibrationPhase? = null
 
-    init { imuThread?.start() }
+    init {
+        if (imuEnabled) {
+            magneticCalibration = RayneoMagneticCalibrationStore.load(calibrationStoreKey)
+            magneticCalibrator.useCalibration(magneticCalibration)
+            executor.execute { listener.onImuCalibration(publicCalibration()) }
+        }
+        imuThread?.start()
+    }
 
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         if (!displayEnabled) {
@@ -100,7 +124,7 @@ internal class XrealOneFamilySession(
             }
             status("${model.displayName} IMU 已连接 ${XrealOneNcmTransport.GLASSES_HOST}:${XrealOneNcmTransport.IMU_PORT}")
             while (running.get()) {
-                NativeBridge.xrealOneReadImu(handle)?.let(::decodeNativeImu)
+                NativeBridge.xrealOneReadImu(handle)?.let(::decodeNativeImu)?.let(::calibrateMagnetic)
                     ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Exception) {
@@ -113,13 +137,59 @@ internal class XrealOneFamilySession(
     private fun decodeNativeImu(sample: ByteArray): ImuSample? {
         if (sample.size < NATIVE_IMU_SAMPLE_SIZE) return null
         val buffer = ByteBuffer.wrap(sample).order(ByteOrder.LITTLE_ENDIAN)
+        val magnetic = floatArrayOf(buffer.getFloat(32), buffer.getFloat(36), buffer.getFloat(40))
+            .takeIf { it.all(Float::isFinite) }
         return ImuSample(
             buffer.getLong(0),
             floatArrayOf(buffer.getFloat(8), buffer.getFloat(12), buffer.getFloat(16)),
             floatArrayOf(buffer.getFloat(20), buffer.getFloat(24), buffer.getFloat(28)),
-            null,
-            Float.NaN,
-            buffer.getInt(32),
+            magnetic,
+            buffer.getFloat(44),
+            buffer.getInt(48),
+            calibration = calibrationState(),
+        )
+    }
+
+    private fun calibrateMagnetic(sample: ImuSample): ImuSample {
+        val raw = sample.magneticField ?: return sample
+        val update = magneticCalibrator.update(raw)
+        reportMagneticProgress(update)
+        if (update.calibration != null && magneticCalibration == null) {
+            magneticCalibration = update.calibration
+            RayneoMagneticCalibrationStore.save(calibrationStoreKey, update.calibration)
+            executor.execute { listener.onImuCalibration(publicCalibration()) }
+            status("${model.displayName} 磁力计 host 三轴椭球校准完成并已保存")
+        }
+        return sample.copy(
+            magneticField = if (update.usable) (magneticCalibration ?: update.calibration)?.apply(raw) ?: raw else null,
+            calibration = calibrationState(),
+        )
+    }
+
+    private fun reportMagneticProgress(update: RayneoMagneticUpdate) {
+        val progress = update.progress
+        if (progress.phase != lastProgressPhase || progress.acceptedSamples - lastProgressSamples >= PROGRESS_INTERVAL) {
+            lastProgressPhase = progress.phase
+            lastProgressSamples = progress.acceptedSamples
+            executor.execute { listener.onImuHostCalibrationProgress(progress) }
+        }
+    }
+
+    private fun calibrationState() = ImuCalibrationState(
+        accelerometer = ImuCalibrationLevel.FACTORY,
+        gyroscope = ImuCalibrationLevel.FACTORY,
+        magnetometer = if (magneticCalibration == null) ImuCalibrationLevel.NONE else ImuCalibrationLevel.HOST_ESTIMATED,
+    )
+
+    private fun publicCalibration(): ImuCalibrationData {
+        val magnetic = magneticCalibration
+        return ImuCalibrationData(
+            source = if (magnetic == null) ImuCalibrationSource.DEVICE_FACTORY else ImuCalibrationSource.MIXED,
+            state = calibrationState(),
+            accelerometerBiasMetersPerSecondSquared = FloatArray(3),
+            gyroscopeBiasRadiansPerSecond = FloatArray(3),
+            magnetometerBias = magnetic?.bias?.copyOf(),
+            magnetometerCorrectionMatrix = magnetic?.correctionMatrix?.copyOf(),
         )
     }
 
@@ -225,6 +295,17 @@ internal class XrealOneFamilySession(
         executor.execute { listener.onStatus(message) }
     }
 
+    override fun resetHostImuCalibration(): Boolean {
+        RayneoMagneticCalibrationStore.clear(calibrationStoreKey)
+        magneticCalibration = null
+        magneticCalibrator.reset()
+        lastProgressSamples = -PROGRESS_INTERVAL
+        lastProgressPhase = null
+        executor.execute { listener.onImuCalibration(publicCalibration()) }
+        status("${model.displayName} 已清除磁力计 host 校准；请缓慢绕三个轴旋转眼镜")
+        return true
+    }
+
     override fun close() {
         if (!running.compareAndSet(true, false)) return
         imuThread?.interrupt(); if (Thread.currentThread() !== imuThread) imuThread?.join(1_200)
@@ -232,6 +313,7 @@ internal class XrealOneFamilySession(
 
     private companion object {
         const val TAG = "ArGlassXrealOne"
-        const val NATIVE_IMU_SAMPLE_SIZE = 36
+        const val NATIVE_IMU_SAMPLE_SIZE = 52
+        const val PROGRESS_INTERVAL = 100
     }
 }
