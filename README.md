@@ -162,12 +162,14 @@ its `magnet_valid` flag. Command replies use report type `0xc8` and echo the
 requested command at byte 8; command `0x3c` then supplies the 3×3 sensor
 correction and accelerometer offset used by the vendor runtime. The driver
 applies these parameters, converts angular velocity from degrees/s to rad/s,
-and exposes the applied matrix and offset through `onImuCalibration`. In the
+and exposes the applied matrix and offset through `onImuCalibration`. A valid
+finite 12-float `0x3c` reply is required before the Air stream starts; a
+timeout or explicit `0xff` response fails the open with no raw-data fallback. In the
 local Taurus 3.0 Pro firmware dated May 21 2025, `0x3c` is an identity matrix
 plus a zero offset. Its 48-byte response contains no magnetic calibration. The
 driver therefore
 collects magnetic extrema while the user rotates the glasses around all three
-axes, fits hard-iron bias plus diagonal soft-iron scale, publishes a second
+axes, fits hard-iron bias plus a 3×3 soft-iron correction, publishes a second
 `MIXED` calibration event, and marks magnetic samples `HOST_ESTIMATED` only
 after that fit succeeds. Device ticks are 100 µs and are exported as
 nanoseconds without replacing the separate host receive timestamp.
@@ -242,20 +244,45 @@ unrelated glasses.
 - Local Taurus 2.0, 3.0, 3.0 Pro, and 4.0 firmware all contain this same
   sensor report, ACK layout, scaling, and 48-byte `0x3c` identity/zero response.
   Their device-info board IDs are `0x35` (Air 3), `0x36` (Air 3s), `0x37`
-  (Air 3s Pro), and `0x39`/`0x3a` (Air 4 family). Because Air 4 and Air 4 Pro
-  share one firmware, that firmware does not establish which of the last two
-  board IDs is which public model.
-- All five models share runtime USB identity `1BBB:AF50`. Before opening the
-  device, Android descriptors identify only an Air 3 group, Air 4 group, or
-  generic family name. The driver reports the more precise board-ID result
-  after the device-info ACK arrives.
+  (Air 3s Pro), `0x39` (Air 4), and `0x3a` (Air 4 Pro). The last two public
+  names are established by the official Android `XRHelper`/OTA model table;
+  Air 4 and Air 4 Pro currently share the same firmware image.
+- The supported models and older Air generations share runtime USB identity
+  `1BBB:AF50`; `SmartGlasses` is not a sufficient model discriminator. Opening
+  is therefore a mandatory `0x00` board-ID probe. The returned session carries
+  the resolved public model/capabilities, while a missing, older, or unknown
+  board ID fails the open instead of retaining the provisional family model.
+- The public `XrHidDeviceInfo` layout places `board_id` at byte 21 and
+  `magnet_valid` at byte 51. It contains no CU field (byte 38 is the firmware
+  build month); CU belongs to the DFU/OTA metadata path and is not used by the
+  runtime driver or its persisted calibration key.
 - The locally available Air 1s, Air Plus, Air 2, and Air 2s firmware payloads
   do not expose an unpacked, verifiable `99 65` sensor layout or the
-  `99 c8`/`0x3c` calibration path found in the newer firmware, so this library
-  does not advertise a raw-IMU driver for them.
-- The local GT/GT MAX package contains an internal DOF implementation but no
-  verified host USB raw-IMU or calibration protocol, so no GT driver is
-  advertised either.
+  `99 c8`/`0x3c` calibration path found in the newer firmware. They are not a
+  compatibility/fallback path: after the permission-gated `0x00` probe, the
+  session rejects every board outside `0x35`, `0x36`, `0x37`, `0x39`, and
+  `0x3a` without sending `0x3c` or `0x01`.
+- The local GT/GT MAX Gemini firmware constructs the same `99 65`, 64-byte
+  nine-axis carrier: acceleration starts at byte 4, gyroscope at 16,
+  temperature at 28, magnetic X/Y at 32/36, device tick at 40, and magnetic Z
+  at 52. Its normal-mode USB configuration has four interfaces: CDC control
+  `0`, CDC data `1`, vendor HID `5`, and runtime DFU `6`. The HID interface has
+  64-byte interrupt OUT `0x04` and IN `0x85` endpoints and carries the `66`/`99`
+  protocol. The paired official runtime selects this HID interface, sends
+  command `0x3c`, and consumes its 12-float transform/acceleration-offset reply.
+  It also sends `0x3e` for the complete -20°C..60°C, 81-point gyroscope
+  bias table; replies are chunked into at most four XYZ float vectors per HID
+  packet. The GT driver requires both factory replies, applies the nearest
+  temperature bias before the shared sensor transform, and exposes all 81
+  converted rad/s points through `onImuCalibration`. Magnetometer hard/soft-iron
+  fitting remains host-side.
+- RayNeo transport selection is descriptor-strict rather than "first IN/OUT":
+  Taurus uses HID interface `0` with interrupt OUT/IN `0x01/0x81`; Gemini uses
+  HID interface `5` with `0x04/0x85`. Gemini CDC interfaces `0/1` and runtime
+  DFU interface `6` are never claimed as IMU command channels.
+- Gemini also contains its own magnetometer-aware DOF estimator. That internal
+  fusion path is distinct from host raw-IMU processing, so the glasses' native
+  hover does not depend on this library's host magnetic calibration.
 - `AirSDK XR Unity v1.0.3` confirms the older client-side command numbers
   `0x00` (device info), `0x01`/`0x02` (sensor on/off), `0x03` (device-side
   gyroscope calibration), and a `0x65` sensor callback. It contains no VID/PID

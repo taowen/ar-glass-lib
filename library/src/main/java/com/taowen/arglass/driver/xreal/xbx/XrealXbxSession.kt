@@ -44,20 +44,24 @@ internal class XrealXbxSession(
         if (mcuReady) return
         status("正在初始化 ${model.displayName} MCU")
         val one = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(1).array()
+        val zero = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(0).array()
+        check(mcuCommand(0x31, "3.1.2".encodeToByteArray()).isNotEmpty()) {
+            "MCU SDK 3.1.2 handshake failed"
+        }
         val commands = listOf(
             0x26 to byteArrayOf(), 0x57 to byteArrayOf(), 0x12 to one,
             0x02 to one, 0x34 to byteArrayOf(), 0x35 to byteArrayOf(),
+            0xe0 to zero,
         )
         commands.forEach { (command, payload) ->
             check(mcuCommand(command, payload).isNotEmpty()) { "MCU init command 0x${command.toString(16)} failed" }
         }
-        check(mcuCommand(0x31, "3.1.1".encodeToByteArray()).isNotEmpty()) { "MCU SDK 3.1.1 handshake failed" }
         repeat(2) {
             check(sendHeartbeat(waitForAck = true)) { "MCU initial heartbeat failed" }
         }
         mcuReady = true
         startHeartbeat()
-        status("${model.displayName} MCU 和 SDK 3.1.1 握手完成")
+        status("${model.displayName} MCU 和 SDK 3.1.2 握手完成")
     }
 
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
@@ -66,6 +70,8 @@ internal class XrealXbxSession(
         val value = usb.mcuDisplayModeValue(displayModeProtocol.queryPayloadBytes).takeIf { it >= 0 } ?: return null
         return displayModeProtocol.decodeProfile(value)
     }
+
+    override fun queryCenterTangentFov() = imuCalibration?.centerDisplayFov
 
     override fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean {
         check(displayEnabled) { "This session was not opened for display-mode control" }
@@ -99,10 +105,13 @@ internal class XrealXbxSession(
             status("${model.displayName} IMU 已启动")
             while (running.get()) {
                 usb.readImu()?.takeIf { it.size == 64 }?.let { report ->
-                    // Match the selected NR 3.1 receiver: capture the Android
-                    // monotonic arrival clock at the USB boundary, before
-                    // report decoding and factory calibration add latency.
-                    val hostArrivalTimeNanos = SystemClock.elapsedRealtimeNanos()
+                    // Match the selected NR 3.1 receiver: capture Android's
+                    // CLOCK_MONOTONIC at the USB boundary, before report
+                    // decoding and factory calibration add latency.
+                    // System.nanoTime() is the Java boundary for that clock;
+                    // elapsedRealtimeNanos() uses CLOCK_BOOTTIME and diverges
+                    // by accumulated suspend time on long-running phones.
+                    val hostArrivalTimeNanos = System.nanoTime()
                     decodeXrealImuReport(report)?.copy(
                         hostTimestampNanos = hostArrivalTimeNanos,
                     )
@@ -145,7 +154,7 @@ internal class XrealXbxSession(
     }
 
     private fun sendHeartbeat(waitForAck: Boolean): Boolean {
-        val payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(SystemClock.elapsedRealtimeNanos()).array()
+        val payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(System.nanoTime()).array()
         val response = usb.mcu(0x1a, payload)
         return !waitForAck || response.isNotEmpty()
     }

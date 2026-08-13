@@ -22,6 +22,7 @@ internal class XrealFactoryCalibration private constructor(
     private val magneticMatrix: FloatArray,
     private val gyroscopeGSensitivity: FloatArray,
     val noiseStandardDeviations: FloatArray,
+    val centerDisplayFov: com.taowen.arglass.GlassesTangentFov?,
 ) {
     fun calibrate(sample: ImuSample, hostMagnetic: RayneoMagneticCalibration?): ImuSample {
         val acceleration = subtract(transform(accelerationMatrix, sample.accelerationMetersPerSecondSquared), accelerationBias)
@@ -87,6 +88,7 @@ internal class XrealFactoryCalibration private constructor(
         fun parse(bytes: ByteArray): XrealFactoryCalibration {
             val root = JSONObject(bytes.toString(Charsets.UTF_8).trimEnd('\u0000'))
             val imu = root.getJSONObject("IMU").getJSONObject("device_1")
+            val centerDisplayFov = parseCenterDisplayFov(root)
             val intrinsics = imu.optJSONObject("imu_intrinsics")
             val accelerationMatrixSensor = intrinsics?.floatArrayOrNull("accl_calib_mat", 9)
                 ?: scaleSkewMatrix(imu, "scale_accel", "skew_accel")
@@ -133,6 +135,38 @@ internal class XrealFactoryCalibration private constructor(
                 magneticMatrix = effectiveMagneticMatrixSensor,
                 gyroscopeGSensitivity = sensorMatrixToRuntime(imu.floatArrayOrZeros("gyro_g_sensitivity", 9)),
                 noiseStandardDeviations = imu.optJSONArray("imu_noises")?.floats() ?: floatArrayOf(),
+                centerDisplayFov = centerDisplayFov,
+            )
+        }
+
+        private fun parseCenterDisplayFov(root: JSONObject): com.taowen.arglass.GlassesTangentFov? {
+            val display = root.optJSONObject("display") ?: return null
+            val resolution = display.optJSONArray("resolution") ?: return null
+            if (resolution.length() < 2) return null
+            val width = resolution.optDouble(0, 0.0).toFloat()
+            val height = resolution.optDouble(1, 0.0).toFloat()
+            val left = display.floatArrayOrNull("k_left_display", 9) ?: return null
+            val right = display.floatArrayOrNull("k_right_display", 9) ?: return null
+            // SDK 3.1 allocates a 1968x1134 source for a 1920x1080 display,
+            // centred with 24 horizontal and 27 vertical pixels of overfill.
+            // Component 6 is not the mean of the two already-projected eye
+            // FOVs. InputManager first averages the two display intrinsic
+            // matrices in float precision, then projects that virtual centre
+            // camera. Retaining this operation order reproduces all four
+            // NRHMDGetComponentFov(6) float values bit-for-bit.
+            val sourceWidth = 1968f
+            val sourceHeight = 1134f
+            val paddingX = (sourceWidth - width) * 0.5f
+            val paddingY = (sourceHeight - height) * 0.5f
+            val fx = (left[0] + right[0]) * 0.5f
+            val fy = (left[4] + right[4]) * 0.5f
+            val cx = (left[2] + right[2]) * 0.5f
+            val cy = (left[5] + right[5]) * 0.5f
+            return com.taowen.arglass.GlassesTangentFov(
+                left = -(cx + paddingX) / fx,
+                right = (sourceWidth - cx - paddingX) / fx,
+                top = (cy + paddingY) / fy,
+                bottom = -(sourceHeight - cy - paddingY) / fy,
             )
         }
 

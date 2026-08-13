@@ -11,10 +11,9 @@ import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.GlassesDriver
-import com.taowen.arglass.driver.rayneo.airfamily.RayneoAirFamilySession
 import java.util.concurrent.Executor
 
-/** RayNeo GT and GT Max share the Gemini USB protocol and are distinguished by device info. */
+/** RayNeo GT and GT Max share the Gemini raw-IMU protocol and are distinguished by device info. */
 internal object RayneoGtFamilyDriver : GlassesDriver {
     override val id = "rayneo_gt_family"
 
@@ -34,7 +33,7 @@ internal object RayneoGtFamilyDriver : GlassesDriver {
                     calibration = ImuCalibrationState(
                         accelerometer = ImuCalibrationLevel.FACTORY,
                         gyroscope = ImuCalibrationLevel.FACTORY,
-                        // USB command 0x3c contains no magnetometer factory hard/soft-iron fit.
+                        // USB 0x3c supplies only the shared IMU transform/acceleration offset.
                         magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
                     ),
                 ),
@@ -54,7 +53,7 @@ internal object RayneoGtFamilyDriver : GlassesDriver {
         require(feature == SessionFeature.IMU || feature == SessionFeature.ALL) {
             "RayNeo Gemini open protocol currently exposes IMU only"
         }
-        return RayneoAirFamilySession(usbManager, device, model, executor, listener)
+        return RayneoGtFamilySession(usbManager, device, model, executor, listener)
     }
 
     private const val RAYNEO_GEMINI_VENDOR_ID = 0x3941

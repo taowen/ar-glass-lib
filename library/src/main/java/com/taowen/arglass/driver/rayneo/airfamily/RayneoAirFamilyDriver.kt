@@ -5,7 +5,6 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
-import com.taowen.arglass.ImuCalibrationLevel
 import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
@@ -29,11 +28,9 @@ internal object RayneoAirFamilyDriver : GlassesDriver {
                 showInArctrlDisplayModeToggle = false,
                 imuTrackingSupport = ImuTrackingSupport(
                     axisCount = 9,
-                    calibration = ImuCalibrationState(
-                        accelerometer = ImuCalibrationLevel.FACTORY,
-                        gyroscope = ImuCalibrationLevel.FACTORY,
-                        magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
-                    ),
+                    // The shared descriptor cannot establish a supported board. The mandatory
+                    // device-info probe returns the resolved model and calibration capability.
+                    calibration = ImuCalibrationState(),
                 ),
             )
         } else {
@@ -51,13 +48,20 @@ internal object RayneoAirFamilyDriver : GlassesDriver {
         require(feature == SessionFeature.IMU || feature == SessionFeature.ALL) {
             "RayNeo open protocol currently exposes IMU only"
         }
-        return RayneoAirFamilySession(usbManager, device, model, executor, listener)
+        return RayneoAirFamilySession(
+            usbManager,
+            device,
+            model,
+            executor,
+            listener,
+            RayneoUsbProtocol.TAURUS,
+        )
     }
 
     private fun modelName(device: UsbDevice): String = when (device.productName?.trim()) {
         "RayNeo AR Glasses" -> "Air 4 / Air 4 Pro"
-        "SmartGlasses" -> "Air family"
-        else -> "Air family"
+        "SmartGlasses" -> "Supported Air (board probe required)"
+        else -> "Supported Air (board probe required)"
     }
 
     private const val RAYNEO_VENDOR_ID = 0x1bbb

@@ -75,7 +75,10 @@ internal interface CompositeGlassesDriver : GlassesDriver {
 }
 
 internal interface DriverSession : Closeable {
+    /** More precise model information learned only after a permission-gated protocol probe. */
+    val resolvedModel: GlassesModel? get() = null
     fun resetHostImuCalibration(): Boolean = false
+    fun queryCenterTangentFov(): com.taowen.arglass.GlassesTangentFov? = null
     fun queryDisplayProfile(): GlassesDisplayProfile? = null
     fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean =
         error("Display profile control is not supported")

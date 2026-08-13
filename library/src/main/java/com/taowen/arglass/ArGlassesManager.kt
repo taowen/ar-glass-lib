@@ -171,7 +171,7 @@ class ArGlassesManager(
         val driverSession = if (driver is CompositeGlassesDriver)
             driver.openComposite(connectivityManager, usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, diagnosticListener)
         else driver.open(connectivityManager, usbManager, device, model, feature, executor, diagnosticListener)
-        return ArGlassesSession(device, model, driverSession).also { session = it }
+        return ArGlassesSession(device, driverSession.resolvedModel ?: model, driverSession).also { session = it }
     }
 
     fun open(glasses: ConnectedGlasses, feature: SessionFeature = SessionFeature.ALL): ArGlassesSession {
@@ -210,6 +210,13 @@ class ArGlassesSession internal constructor(
     val model: GlassesModel,
     private val delegate: DriverSession,
 ) : Closeable {
+    fun queryCenterTangentFov(): GlassesTangentFov? =
+        delegate.queryCenterTangentFov().also {
+            ArGlassesDiagnostics.recordEvent(
+                "query center tangent fov model=${model.id} result=$it",
+            )
+        }
+
     fun isIn3d(): Boolean? {
         ArGlassesDiagnostics.recordEvent("query 3d state model=${model.id}")
         return delegate.isIn3d().also {

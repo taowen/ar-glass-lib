@@ -135,6 +135,14 @@ data class ImuSample(
     val transportMetadata: ImuTransportMetadata? = null,
 )
 
+/** Per-device tangent-space field of view returned by the glasses calibration. */
+data class GlassesTangentFov(
+    val left: Float,
+    val right: Float,
+    val top: Float,
+    val bottom: Float,
+)
+
 /** Extended timing/scaling fields transported alongside an IMU sample. */
 data class ImuTransportMetadata(
     val systemTimestampNanos: Long? = null,

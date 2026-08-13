@@ -6,6 +6,7 @@ import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuHostCalibrationPhase
 import com.taowen.arglass.ImuHostCalibrationProgress
+import com.taowen.arglass.TemperatureGyroscopeBias
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -17,6 +18,7 @@ import kotlin.math.sqrt
 internal data class RayneoFactoryCalibration(
     val sensorTransform: FloatArray,
     val accelerationOffset: FloatArray,
+    val gyroscopeTemperatureBiases: List<RayneoGyroscopeTemperatureBias> = emptyList(),
 ) {
     init {
         require(sensorTransform.size == 9)
@@ -25,14 +27,18 @@ internal data class RayneoFactoryCalibration(
 
     fun acceleration(raw: FloatArray): FloatArray = add(transform(raw), accelerationOffset)
 
-    fun angularVelocity(rawDegreesPerSecond: FloatArray): FloatArray =
-        transform(rawDegreesPerSecond).also { value ->
-            val radiansPerDegree = (PI / 180.0).toFloat()
-            value.indices.forEach { value[it] *= radiansPerDegree }
-        }
+    fun angularVelocity(rawDegreesPerSecond: FloatArray, temperatureCelsius: Float): FloatArray {
+        val bias = gyroscopeTemperatureBiases.minByOrNull {
+            abs(it.temperatureCelsius - temperatureCelsius)
+        }?.biasDegreesPerSecond ?: ZERO_VECTOR
+        return radians(transform(subtract(rawDegreesPerSecond, bias)))
+    }
 
     fun publicData(magnetic: RayneoMagneticCalibration? = null): ImuCalibrationData {
         val magneticReady = magnetic != null
+        val nominalGyroscopeBias = gyroscopeTemperatureBiases.minByOrNull {
+            abs(it.temperatureCelsius - NOMINAL_TEMPERATURE_CELSIUS)
+        }?.biasDegreesPerSecond ?: ZERO_VECTOR
         return ImuCalibrationData(
             source = if (magneticReady) ImuCalibrationSource.MIXED else ImuCalibrationSource.DEVICE_FACTORY,
             state = ImuCalibrationState(
@@ -41,8 +47,11 @@ internal data class RayneoFactoryCalibration(
                 magnetometer = if (magneticReady) ImuCalibrationLevel.HOST_ESTIMATED else ImuCalibrationLevel.NONE,
             ),
             accelerometerBiasMetersPerSecondSquared = FloatArray(3) { -accelerationOffset[it] },
-            gyroscopeBiasRadiansPerSecond = floatArrayOf(0f, 0f, 0f),
+            gyroscopeBiasRadiansPerSecond = radians(transform(nominalGyroscopeBias)),
             magnetometerBias = magnetic?.bias?.copyOf(),
+            gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
+                TemperatureGyroscopeBias(it.temperatureCelsius, radians(transform(it.biasDegreesPerSecond)))
+            },
             accelerometerCorrectionMatrix = publicCorrectionMatrix(),
             gyroscopeCorrectionMatrix = publicCorrectionMatrix(),
             magnetometerCorrectionMatrix = magnetic?.correctionMatrix?.copyOf(),
@@ -63,7 +72,25 @@ internal data class RayneoFactoryCalibration(
 
     private fun add(left: FloatArray, right: FloatArray): FloatArray =
         FloatArray(3) { left[it] + right[it] }
+
+    private fun subtract(left: FloatArray, right: FloatArray): FloatArray =
+        FloatArray(3) { left[it] - right[it] }
+
+    private fun radians(value: FloatArray): FloatArray = value.also { radians ->
+        val radiansPerDegree = (PI / 180.0).toFloat()
+        radians.indices.forEach { radians[it] *= radiansPerDegree }
+    }
+
+    private companion object {
+        const val NOMINAL_TEMPERATURE_CELSIUS = 25f
+        val ZERO_VECTOR = FloatArray(3)
+    }
 }
+
+internal data class RayneoGyroscopeTemperatureBias(
+    val temperatureCelsius: Float,
+    val biasDegreesPerSecond: FloatArray,
+)
 
 internal data class RayneoMagneticCalibration(
     val bias: FloatArray,
@@ -77,6 +104,17 @@ internal data class RayneoMagneticCalibration(
                 correctionMatrix[output * 3 + 2] * centered[2]
         }
     }
+
+    fun publicData(): ImuCalibrationData = ImuCalibrationData(
+        source = ImuCalibrationSource.HOST_ESTIMATE,
+        state = ImuCalibrationState(
+            magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
+        ),
+        accelerometerBiasMetersPerSecondSquared = FloatArray(3),
+        gyroscopeBiasRadiansPerSecond = FloatArray(3),
+        magnetometerBias = bias.copyOf(),
+        magnetometerCorrectionMatrix = correctionMatrix.copyOf(),
+    )
 }
 
 internal data class RayneoMagneticUpdate(

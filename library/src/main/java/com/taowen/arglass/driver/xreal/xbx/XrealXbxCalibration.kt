@@ -10,6 +10,7 @@ import com.taowen.arglass.driver.xreal.XrealFactoryCalibration
 internal class XrealXbxCalibration private constructor(
     private val factory: XrealFactoryCalibration,
 ) {
+    val centerDisplayFov get() = factory.centerDisplayFov
     fun publicData(): ImuCalibrationData = factory.publicData()
 
     fun calibrate(sample: ImuSample): ImuSample = factory.calibrate(sample, hostMagnetic = null)
