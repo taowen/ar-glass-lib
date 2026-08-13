@@ -287,11 +287,18 @@ unrelated glasses.
   establishes the exact high-refresh input modes.
 - One class-3 HID interface supplies interrupt IN and OUT endpoints. The driver
   sends 24-byte `AA 55 55 AA` output reports and accepts the normal 18-byte
-  sensor input even though the HID descriptor declares 24 bytes.
+  sensor input even though the HID descriptor declares 24 bytes. As with the
+  XBX driver, a dedicated JNI/libusb session owns interface claiming, native
+  command construction, interrupt transfers, IMU decoding, axis conversion,
+  and device-timestamp accumulation; Kotlin only manages the model/session and
+  forwards normalized samples.
 - Display group `0` selects 2D with value `1` or side-by-side 3D with value `0`.
   Top/bottom is deliberately not exposed. This command changes content layout;
   it does not make the source select the profile's native resolution, refresh
   rate, or pixel clock. The host must independently select a matching EDID mode.
+  No display-mode query or acknowledgement has been recovered, so setting a
+  mode reports only that the complete USB output report was sent and querying
+  the active profile returns unknown rather than a cached assumption.
 - IMU group `1` starts/stops the six-axis stream. Samples are batch-averaged
   acceleration and angular velocity with byte 12 carrying the batch duration in
   milliseconds. The driver converts them to m/s² and rad/s and accumulates that
@@ -299,6 +306,8 @@ unrelated glasses.
 - No magnetometer, factory calibration, quaternion, or absolute device clock is
   exposed by the recovered protocol, so tracking support is declared as
   uncalibrated six-axis IMU.
+- GOOVIS interrupt IN/OUT traffic is recorded by the same native USB diagnostics
+  trace used by the XBX session and is included in diagnostics exports.
 
 ## XREAL Air 2 Ultra protocol notes
 

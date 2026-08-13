@@ -30,6 +30,7 @@ if(AR_GLASS_BUILD_JNI)
         dp_rpc_trace.cpp
         usb_trace.cpp
         beast_uvc_jni.cpp
+        goovis_g3_jni.cpp
         rokid_max2_imu_jni.cpp
         xreal_one_dp_jni.cpp
         xreal_one_imu_jni.cpp)

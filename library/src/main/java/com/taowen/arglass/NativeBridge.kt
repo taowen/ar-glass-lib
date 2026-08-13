@@ -24,6 +24,19 @@ internal object NativeBridge {
     external fun xrealImuCommand(handle: Long, command: Int, payload: ByteArray): ByteArray
     external fun xrealReadImu(handle: Long, timeoutMs: Int): ByteArray?
     external fun closeXrealUsbSession(handle: Long)
+    external fun createGoovisUsbSession(
+        fileDescriptor: Int,
+        vendorId: Int,
+        productId: Int,
+        interfaceId: Int,
+        inputEndpoint: Int,
+        outputEndpoint: Int,
+        modelKind: Int,
+    ): Long
+    external fun goovisSetDisplaySbs(handle: Long, enabled: Boolean): Boolean
+    external fun goovisSetImuEnabled(handle: Long, enabled: Boolean): Boolean
+    external fun goovisReadImu(handle: Long, timeoutMs: Int): ByteArray?
+    external fun closeGoovisUsbSession(handle: Long)
     external fun createXrealOneTcpImuSession(host: String, port: Int, connectTimeoutMs: Int, readTimeoutMs: Int): Long
     external fun xrealOneReadImu(handle: Long): ByteArray?
     external fun closeXrealOneTcpImuSession(handle: Long)

@@ -17,6 +17,7 @@ import java.util.concurrent.Executor
 
 internal object GoovisG3FamilyDriver : GlassesDriver {
     override val id = "goovis_g3_family"
+    private const val VENDOR_ID = 0x880a
 
     private val products = mapOf(
         // GOOVIS sells G3 Max, G3X and G3X Pro as distinct products. Their
@@ -52,7 +53,7 @@ internal object GoovisG3FamilyDriver : GlassesDriver {
     )
 
     override fun identify(device: UsbDevice): GlassesModel? {
-        if (device.vendorId != GoovisG3Protocol.VENDOR_ID) return null
+        if (device.vendorId != VENDOR_ID) return null
         val product = products[device.productId] ?: return null
         return GlassesModel(
             id = product.id,
