@@ -21,6 +21,9 @@ internal class NativeUsbDeviceSession(usbManager: UsbManager, device: UsbDevice)
     fun transfer(endpoint: UsbEndpoint, buffer: ByteArray, timeoutMs: Int): Int = NativeBridge.usbEndpointTransfer(
         handle, endpoint.address, endpoint.type == UsbConstants.USB_ENDPOINT_XFER_INT, buffer, timeoutMs,
     )
+    /** Use bulk URBs even when a vendor exposes the stream through a HID/interrupt descriptor. */
+    fun bulkTransfer(endpoint: UsbEndpoint, buffer: ByteArray, timeoutMs: Int): Int =
+        NativeBridge.usbEndpointTransfer(handle, endpoint.address, false, buffer, timeoutMs)
     fun control(requestType: Int, request: Int, value: Int, index: Int, buffer: ByteArray, timeoutMs: Int): Int =
         NativeBridge.usbControlTransfer(handle, requestType, request, value, index, buffer, timeoutMs)
 

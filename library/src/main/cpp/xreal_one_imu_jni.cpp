@@ -25,7 +25,7 @@ namespace {
 // NRImuSubmitExt carrier, so the wire frame is 6 + 128 bytes, not 84 bytes.
 constexpr std::array<std::uint8_t, 6> kHeader = {0x28, 0x36, 0x00, 0x00, 0x00, 0x80};
 constexpr std::size_t kFrameSize = 6 + 0x80;
-constexpr std::size_t kSampleSize = 52;
+constexpr std::size_t kSampleSize = 100;
 
 template <typename T>
 T read_le(const std::uint8_t* data) {
@@ -39,12 +39,22 @@ void write_bytes(std::uint8_t* out, std::size_t offset, const void* value, std::
 }
 
 struct XrealOneSample {
+    std::uint64_t system_timestamp_nanos = 0;
     std::uint64_t timestamp_nanos = 0;
+    std::uint64_t sensor_timestamp_nanos = 0;
+    std::uint32_t data_mask = 0;
     std::array<float, 3> acceleration{};
     std::array<float, 3> gyro{};
     std::array<float, 3> magnetic{};
     float temperature = std::numeric_limits<float>::quiet_NaN();
     bool magnetic_valid = false;
+    std::uint8_t imu_id = 0;
+    std::uint32_t frame_id = 0;
+    float gyroscope_numerator = std::numeric_limits<float>::quiet_NaN();
+    float accelerometer_numerator = std::numeric_limits<float>::quiet_NaN();
+    float magnetometer_numerator = std::numeric_limits<float>::quiet_NaN();
+    std::uint32_t output_numerator_mask = 0;
+    float group_delay = std::numeric_limits<float>::quiet_NaN();
 };
 
 class ScopedFd {
@@ -178,14 +188,26 @@ private:
         if (accel_norm < 5.0F || accel_norm > 15.0F) return false;
         if (std::fabs(gx) > 1000.0F || std::fabs(gy) > 1000.0F || std::fabs(gz) > 1000.0F) return false;
 
+        // NRImuSubmitExt is packed. Keep the unaligned tail fields byte-exact;
+        // recovered firmware shows that its sensor matrices/biases have already
+        // been applied before these floating-point vectors reach this carrier.
+        out.system_timestamp_nanos = read_le<std::uint64_t>(frame + 6);
         out.timestamp_nanos = read_le<std::uint64_t>(frame + 14);
+        out.sensor_timestamp_nanos = read_le<std::uint64_t>(frame + 22);
         out.acceleration = {-ax, -az, -ay};
         out.gyro = {-gx, -gz, -gy};
-        const std::uint32_t data_mask = read_le<std::uint32_t>(frame + 30);
-        out.magnetic_valid = (data_mask & 0x4U) != 0U &&
+        out.data_mask = read_le<std::uint32_t>(frame + 30);
+        out.magnetic_valid = (out.data_mask & 0x4U) != 0U &&
                 std::isfinite(mx) && std::isfinite(my) && std::isfinite(mz);
         if (out.magnetic_valid) out.magnetic = {-mx, -mz, -my};
         out.temperature = read_le<float>(frame + 70);
+        out.imu_id = frame[74];
+        out.frame_id = read_le<std::uint32_t>(frame + 75);
+        out.gyroscope_numerator = read_le<float>(frame + 79);
+        out.accelerometer_numerator = read_le<float>(frame + 83);
+        out.magnetometer_numerator = read_le<float>(frame + 87);
+        out.output_numerator_mask = read_le<std::uint32_t>(frame + 91);
+        out.group_delay = read_le<float>(frame + 95);
         return true;
     }
 
@@ -221,6 +243,17 @@ jbyteArray to_sample_array(JNIEnv* env, const XrealOneSample& sample) {
     write_bytes(bytes.data(), 44, &sample.temperature, sizeof(sample.temperature));
     const std::int32_t version = 1;
     write_bytes(bytes.data(), 48, &version, sizeof(version));
+    write_bytes(bytes.data(), 52, &sample.system_timestamp_nanos, sizeof(sample.system_timestamp_nanos));
+    write_bytes(bytes.data(), 60, &sample.sensor_timestamp_nanos, sizeof(sample.sensor_timestamp_nanos));
+    write_bytes(bytes.data(), 68, &sample.data_mask, sizeof(sample.data_mask));
+    const std::uint32_t imu_id = sample.imu_id;
+    write_bytes(bytes.data(), 72, &imu_id, sizeof(imu_id));
+    write_bytes(bytes.data(), 76, &sample.frame_id, sizeof(sample.frame_id));
+    write_bytes(bytes.data(), 80, &sample.gyroscope_numerator, sizeof(sample.gyroscope_numerator));
+    write_bytes(bytes.data(), 84, &sample.accelerometer_numerator, sizeof(sample.accelerometer_numerator));
+    write_bytes(bytes.data(), 88, &sample.magnetometer_numerator, sizeof(sample.magnetometer_numerator));
+    write_bytes(bytes.data(), 92, &sample.output_numerator_mask, sizeof(sample.output_numerator_mask));
+    write_bytes(bytes.data(), 96, &sample.group_delay, sizeof(sample.group_delay));
     auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()), reinterpret_cast<const jbyte*>(bytes.data()));
     return result;

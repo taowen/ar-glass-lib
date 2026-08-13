@@ -1,5 +1,6 @@
 #include "ar_glass.h"
 
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstring>
@@ -126,5 +127,97 @@ bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
     }
     out.temperature_celsius = read_le<std::int16_t>(b, 2) * (v1 ? 0.4831F : 0.007548309F) + 25.F;
     return true;
+}
+
+std::array<std::uint8_t, 24> make_goovis_command(std::uint8_t group, std::uint8_t value) {
+    std::array<std::uint8_t, 24> report{};
+    report[0] = 0xaa;
+    report[1] = 0x55;
+    report[2] = 0x55;
+    report[3] = 0xaa;
+    report[4] = group;
+    report[5] = value;
+    unsigned int checksum = 0;
+    for (std::size_t i = 0; i < 6; ++i) checksum += report[i];
+    report[6] = static_cast<std::uint8_t>(checksum);
+    return report;
+}
+
+bool decode_goovis_imu(std::span<const std::uint8_t> report, GoovisModelKind model,
+                       std::int64_t timestamp_nanos, ImuSample& out) {
+    if (report.size() < 13 || report[12] == 0) return false;
+    constexpr float gravity_mps2 = 9.80665F;
+    constexpr float accel_g_per_lsb = 4.F / 32768.F;
+    constexpr float gyro_radps_per_lsb = 1000.F / 32768.F * 0.01745329251994329577F;
+    const std::array<float, 3> acceleration = {
+        read_be_i16(report, 0) * accel_g_per_lsb * gravity_mps2,
+        read_be_i16(report, 2) * accel_g_per_lsb * gravity_mps2,
+        read_be_i16(report, 4) * accel_g_per_lsb * gravity_mps2,
+    };
+    const std::array<float, 3> angular_velocity = {
+        read_be_i16(report, 6) * gyro_radps_per_lsb,
+        read_be_i16(report, 8) * gyro_radps_per_lsb,
+        read_be_i16(report, 10) * gyro_radps_per_lsb,
+    };
+    const auto runtime_coordinates = [model](const std::array<float, 3>& vector) {
+        switch (model) {
+            case GoovisModelKind::g3: return vector;
+            case GoovisModelKind::g3x:
+            case GoovisModelKind::g3x_pro: return std::array{-vector[0], vector[2], vector[1]};
+            case GoovisModelKind::a1: return std::array{vector[1], vector[2], vector[0]};
+        }
+        return vector;
+    };
+    out = {};
+    out.timestamp_nanos = timestamp_nanos;
+    out.acceleration_mps2 = runtime_coordinates(acceleration);
+    out.angular_velocity_radps = runtime_coordinates(angular_velocity);
+    out.magnetic_field.fill(std::numeric_limits<float>::quiet_NaN());
+    out.temperature_celsius = std::numeric_limits<float>::quiet_NaN();
+    out.report_version = 1;
+    return true;
+}
+
+std::vector<ImuSample> decode_rokid_max2_imu_batch(std::span<const std::uint8_t> packet) {
+    constexpr std::size_t sample_size = 64;
+    constexpr float radians_per_degree = 0.01745329251994329577F;
+    constexpr float meters_per_second_squared_per_g = 9.80665F;
+    std::vector<ImuSample> decoded;
+    decoded.reserve(packet.size() / sample_size);
+    const auto norm = [](const std::array<float, 3>& value) {
+        return std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+    };
+    for (std::size_t offset = 0; offset + sample_size <= packet.size(); offset += sample_size) {
+        const auto sample = packet.subspan(offset, sample_size);
+        if (sample[0] != 0x11) continue;
+        ImuSample out{};
+        std::uint64_t timestamp_micros = 0;
+        for (std::size_t i = 0; i < 7; ++i) {
+            timestamp_micros |= static_cast<std::uint64_t>(sample[1 + i]) << (8U * i);
+        }
+        out.timestamp_nanos = static_cast<std::int64_t>(timestamp_micros * 1000U);
+        for (std::size_t i = 0; i < 3; ++i) {
+            out.acceleration_mps2[i] = read_le<float>(sample, 12 + i * sizeof(float));
+            out.angular_velocity_radps[i] =
+                    read_le<float>(sample, 24 + i * sizeof(float)) * radians_per_degree;
+            out.magnetic_field[i] = read_le<float>(sample, 36 + i * sizeof(float));
+        }
+        const float acceleration_norm = norm(out.acceleration_mps2);
+        if (acceleration_norm >= 0.1F && acceleration_norm <= 4.F) {
+            for (auto& value : out.acceleration_mps2) value *= meters_per_second_squared_per_g;
+        }
+        if (!std::all_of(out.acceleration_mps2.begin(), out.acceleration_mps2.end(),
+                         [](float value) { return std::isfinite(value); }) ||
+            !std::all_of(out.angular_velocity_radps.begin(), out.angular_velocity_radps.end(),
+                         [](float value) { return std::isfinite(value); }) ||
+            !std::all_of(out.magnetic_field.begin(), out.magnetic_field.end(),
+                         [](float value) { return std::isfinite(value); }) ||
+            norm(out.acceleration_mps2) < 1.F || norm(out.acceleration_mps2) > 40.F ||
+            norm(out.magnetic_field) < 1.F || norm(out.magnetic_field) > 500.F) continue;
+        out.temperature_celsius = std::numeric_limits<float>::quiet_NaN();
+        out.report_version = 0x11;
+        decoded.push_back(out);
+    }
+    return decoded;
 }
 }  // namespace ar_glass

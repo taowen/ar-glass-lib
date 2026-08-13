@@ -5,8 +5,6 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
-import com.taowen.arglass.ImuCalibrationLevel
-import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
@@ -29,11 +27,7 @@ internal object VitureBeastDriver : GlassesDriver {
             showInArctrlDisplayModeToggle = true,
             imuTrackingSupport = ImuTrackingSupport(
                 axisCount = 9,
-                calibration = ImuCalibrationState(
-                    accelerometer = ImuCalibrationLevel.FACTORY,
-                    gyroscope = ImuCalibrationLevel.FACTORY,
-                    magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
-                ),
+                calibration = VitureV2Calibration.FACTORY_STATE,
             ),
         ) else null
 

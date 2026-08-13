@@ -7,13 +7,12 @@ import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
-import com.taowen.arglass.ImuCalibrationLevel
-import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.GlassesDriver
 import com.taowen.arglass.driver.xreal.onefamily.XrealOneFamilySession
+import com.taowen.arglass.driver.xreal.onefamily.XrealOneFactoryCalibration
 import java.util.concurrent.Executor
 
 /** Gina application identity. PID 0x0435 is its bootloader and is intentionally excluded. */
@@ -30,14 +29,7 @@ internal object XrealOneProDriver : GlassesDriver {
             supportedDisplayProfiles = XrealOneProDisplayModeProtocol.profiles,
             preferred2dDisplayProfile = XrealOneProDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.MONO_2D },
             preferred3dDisplayProfile = XrealOneProDisplayModeProtocol.profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
-            imuTrackingSupport = ImuTrackingSupport(
-                9,
-                ImuCalibrationState(
-                    ImuCalibrationLevel.FACTORY,
-                    ImuCalibrationLevel.FACTORY,
-                    ImuCalibrationLevel.HOST_ESTIMATED,
-                ),
-            ),
+            imuTrackingSupport = ImuTrackingSupport(9, XrealOneFactoryCalibration.STATE),
         ) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,

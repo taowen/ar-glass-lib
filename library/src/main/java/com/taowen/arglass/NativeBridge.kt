@@ -48,6 +48,7 @@ internal object NativeBridge {
     external fun usbClaimInterface(handle: Long, interfaceId: Int): Boolean
     external fun usbReleaseInterface(handle: Long, interfaceId: Int)
     external fun usbEndpointTransfer(handle: Long, endpoint: Int, interrupt: Boolean, buffer: ByteArray, timeoutMs: Int): Int
+    external fun decodeRokidMax2ImuBatch(packet: ByteArray, length: Int): ByteArray
     external fun usbControlTransfer(
         handle: Long, requestType: Int, request: Int, value: Int, index: Int,
         buffer: ByteArray, timeoutMs: Int,

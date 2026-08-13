@@ -20,7 +20,8 @@ Supported models:
 - **VITURE Luma Pro** (`35CA:1121` and `35CA:1141`, open Gen2 RAW IMU)
 - **VITURE Luma Cyber** (`35CA:1151`, open Gen2 RAW IMU)
 - **VITURE Pro 2** (`35CA:1301`, open Gen2 RAW IMU)
-- **Rokid glasses** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, `2002`, and `2180`; product string supplies the market name)
+- **Rokid Air / Max** (`04D2:162B`, `162C`, `162D`, `162E`, `162F`, and `2180`; product string supplies the market name)
+- **Rokid Max 2** (`04D2:2002`)
 - **VITURE Beast** (`35CA:1201` and `35CA:1211`, Gen2 Native DOF)
 - **LUCI displays** (`2C30:1030` and `2C30:1031`)
 - **GOOVIS G3 family**: G3 Max (`880A:3501`), A1 (`880A:3502`),
@@ -152,9 +153,9 @@ val profile = connected.model.supportedDisplayProfiles.firstOrNull {
 if (profile != null) session.setDisplayProfile(profile)
 ```
 
-`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time; `hostTimestampNanos` is captured immediately after the USB read so latency-sensitive consumers do not have to timestamp a delayed callback. `calibration` states which corrections the driver has already applied. `onImuCalibration` exposes those applied parameters for inspection, but consumers must not apply them a second time.
+`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time; `hostTimestampNanos` is captured immediately after the transport read so latency-sensitive consumers do not have to timestamp a delayed callback. `calibration` states which corrections the driver has already applied. `onImuCalibration` exposes those applied parameters for inspection when the transport makes them available; `parametersAppliedByDevice=true` identifies opaque device-side coefficients. Consumers must not apply either form a second time. Extended carriers can expose their timing/scaling fields through `transportMetadata`.
 
-XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer bias, factory and temperature-indexed gyroscope biases, magnetometer bias, and noise values, then restart streaming. Selection of the nearest temperature point, bias subtraction, SI units, and sensor-to-runtime axis mapping all remain inside the XBX driver.
+XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer/gyroscope/magnetometer biases, per-sensor scale/skew matrices, `accel_q_gyro`/`gyro_q_mag` alignment, gyroscope gravity sensitivity, temperature-indexed gyroscope biases, and noise values, then restart streaming. Selection of the nearest temperature point, all matrix/bias corrections, SI units, and sensor-to-runtime axis mapping remain inside the XBX driver. A captured XBX A01 factory blob carries the complete schema but uses identity scale/alignment and zero skew/gravity-sensitivity values; those neutral values must not be assumed for A01 Plus or other units.
 
 RayNeo Air 3/4-family sessions query device information before streaming and honor
 its `magnet_valid` flag. Command replies use report type `0xc8` and echo the
@@ -201,9 +202,9 @@ unrelated glasses.
 - Startup reads the V2 long-packet calibration commands `0x3302..0x3306`, validates their inner
   CRC-16/CCITT, and applies gyro/accelerometer/magnetometer bias and 3x3 transforms, accelerometer
   scale, optional `q_mag_imu`, and all three temperature-drift tables before publishing samples.
-- Factory-corrected magnetic samples feed the host hard-iron/soft-iron ellipsoid calibrator. Its
-  per-device result is persisted, can be reset through `resetHostImuCalibration`, and is published
-  as mixed factory/host calibration.
+- Factory-corrected magnetic samples are published directly. The device already supplies magnetic
+  bias, a 3x3 correction/alignment matrix, and an optional temperature table, so the driver does
+  not stack a generic persisted host ellipsoid fit on top of those factory corrections.
 - `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
 - The Beast driver claims only its HID protocol interfaces and supports HID control-transfer fallback when an interface has no OUT endpoint.
 - Beast's monocular camera is a separate `0C45:6368` USB device. The standalone check APK negotiates its 1920×1080@30 MJPEG stream on interface 1 / isochronous endpoint `0x81` directly through USB host APIs instead of Android Camera2.
@@ -348,6 +349,10 @@ mode mapping instead of forcing one fixed preferred mode: 60 Hz 2D maps to
 - It then performs the required `0x31 / "3.1.1"` SDK handshake and two initial heartbeats before claiming IMU interface 1.
 - A 100 ms MCU heartbeat remains active for the session lifetime.
 - IMU initialization stops the old stream, reads the complete calibration blob, syncs, and starts the versioned 64-byte report stream.
+- Helen's MCU schema names `0x1b`/`0x1c` read/write magnetic-state commands. An XBX A01
+  capture returned the scalar state `9`, matching the official `nativeGetMagneticState(): Int`
+  API rather than an additional calibration blob. The driver therefore does not query it as
+  calibration data or send the corresponding setter.
 - Version-2 reports decode gyro/accelerometer from little-endian signed fields,
   while magnetometer multiplier/divisor are big-endian and magnetic samples use
   XREAL's high-byte sign-bit transform. Invalid magnetic divisors are exposed as
@@ -437,13 +442,16 @@ where the transport is native-backed.
   `00 00 00 80` as its big-endian payload length. It therefore reassembles the
   complete 134-byte wire frame (6-byte envelope plus the firmware's 0x80-byte
   `NRImuSubmitExt` carrier), including acceleration, angular velocity,
-  magnetometer, temperature, validity mask and device timestamp. The older
-  XRLinuxDriver reader stopped at 84 bytes and consequently discarded the
-  magnetic and trailing calibration metadata.
-- One-family acceleration and angular velocity arrive after the glasses-side
-  factory pipeline. Magnetic samples are additionally passed through the
-  library's persisted host hard/soft-iron ellipsoid calibration, with magnetic
-  disturbance rejection and an explicit reset/progress API.
+  magnetometer, temperature, validity mask and all three timestamps. The driver
+  also preserves the packed carrier tail: IMU/frame IDs, gyro/accelerometer/
+  magnetometer numerators, output-numerator mask and group delay. The older
+  XRLinuxDriver reader stopped at 84 bytes and discarded these fields.
+- Recovered One-family firmware applies the per-sensor accelerometer, gyroscope
+  and magnetometer factory matrices/biases before publishing `NRImuSubmitExt`.
+  The coefficients themselves are device-owned and absent from the carrier, so
+  `onImuCalibration` reports `DEVICE_FACTORY`, all three sensors as `FACTORY`,
+  and `parametersAppliedByDevice=true`. The driver no longer adds a second host
+  hard/soft-iron fit or suppresses magnetic samples while collecting one.
 - XRLinuxDriver notes that One/One Pro/1S require latest firmware and glasses
   stabilizer/anchor features disabled. Those prerequisites apply to the IMU
   path; they do not by themselves define an open 2D/3D switching protocol.
@@ -509,4 +517,27 @@ where the transport is native-backed.
 - IMU, magnetometer, keys, and proximity reports arrive passively on interrupt endpoint `0x82`.
 - Display-mode vendor control transfers query and switch mirrored 2D, Full SBS 3D, high-refresh 2D, and high-refresh SBS 3D.
 - The implementation follows the MIT-licensed `ar-drivers-rs` Rokid driver and its Android port in `android-sensor-probe`.
+
+## Rokid Max 2 protocol notes
+
+- Max 2 is the distinct `04D2:2002` USB identity and does not use the older
+  Air/Max passive HID report decoder.
+- The driver follows the second-round hardware captures in
+  [`xelsed/rokidmaxwmdapi`](https://github.com/xelsed/rokidmaxwmdapi), which
+  found the single high-speed nine-axis stream on
+  interface 2, endpoint `0x82`. Each transfer contains one or more 64-byte
+  `0x11` samples: a packed 56-bit microsecond timestamp, acceleration at bytes
+  `12..23`, gyroscope at `24..35`, and magnetometer at `36..47`. What the early
+  reader called padding was later confirmed to contain the magnetic vector.
+- The driver submits 4096-byte bulk reads and decodes every contained sample
+  through the reusable C++ core plus its thin JNI adapter, matching the XBX
+  native-decode/Kotlin-public-object split;
+  it does not mix in or concurrently poll the older 512-byte control telemetry.
+  Acceleration is normalized to m/s², angular velocity to rad/s, and magnetic
+  field is exposed in µT.
+- The referenced captures do not expose factory calibration coefficients, so
+  samples advertise nine axes with calibration level `NONE`; the library does
+  not invent factory calibration data.
+- The source repository does not establish a safe, verified Max 2 USB 2D/3D
+  switch command, so this driver deliberately claims only IMU capability.
 - **XREAL One Pro** (`3318:0436`, Gina)

@@ -8,17 +8,10 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
-import com.taowen.arglass.ImuCalibrationLevel
-import com.taowen.arglass.ImuCalibrationState
-import com.taowen.arglass.ImuHostCalibrationPhase
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.NativeUsbDeviceSession
-import com.taowen.arglass.driver.rayneo.RayneoMagneticCalibrationStore
-import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibration
-import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibrator
-import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticUpdate
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
@@ -50,30 +43,19 @@ internal class VitureBeastSession(
         .filter { it.input != null || it.output != null }
     private val workers = CopyOnWriteArrayList<Thread>()
     private val commandPort get() = ports.firstOrNull { it.output != null } ?: ports.first()
-    private val magneticCalibrator = RayneoMagneticCalibrator()
-    private val magneticCalibrationStoreKey = runCatching { device.serialNumber }.getOrNull()
-        ?.takeIf(String::isNotBlank)
-        ?.let { "viture:$it" }
-        ?: "viture:${device.vendorId}:${device.productId}:${device.productName.orEmpty()}"
     private val responseLock = Object()
     @Volatile private var factoryCalibration: VitureV2Calibration? = null
-    @Volatile private var magneticCalibration: RayneoMagneticCalibration? = null
     @Volatile private var displayModeValue: Int? = null
     @Volatile private var nativeModeValue: Int? = null
     @Volatile private var setDisplayStatus: Int? = null
-    private var lastProgressSamples = -HOST_CALIBRATION_PROGRESS_INTERVAL
-    private var lastProgressPhase: ImuHostCalibrationPhase? = null
 
     init {
         check(ports.isNotEmpty()) { "VITURE Beast has no HID protocol interfaces" }
         ports.forEach { check(usb.claim(it.usbInterface)) { "Cannot claim Beast HID interface ${it.usbInterface.id}" } }
         if (imuEnabled) {
             factoryCalibration = readFactoryCalibration()
-            magneticCalibration = RayneoMagneticCalibrationStore.load(magneticCalibrationStoreKey).also {
-                magneticCalibrator.useCalibration(it)
-            }
             factoryCalibration?.let { calibration ->
-                executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
+                executor.execute { listener.onImuCalibration(calibration.publicData()) }
             }
             ports.mapNotNull { it.input }.forEach { input ->
                 Thread({ readLoop(input) }, "viture-beast-hid-${input.address}").also { workers += it; it.start() }
@@ -83,7 +65,7 @@ internal class VitureBeastSession(
                 if (factoryCalibration == null) {
                     "${model.displayName} RAW IMU 已请求（120 Hz），设备未返回完整九轴出厂校准"
                 } else {
-                    "${model.displayName} 已加载九轴出厂校准并请求 RAW IMU（120 Hz）；请绕三轴旋转以校准环境磁场"
+                    "${model.displayName} 已加载九轴出厂校准并请求 RAW IMU（120 Hz）"
                 },
             )
         }
@@ -188,50 +170,12 @@ internal class VitureBeastSession(
 
     private fun calibrate(rawSample: ImuSample): ImuSample {
         val factory = factoryCalibration
-        var sample = factory?.calibrateFactory(rawSample) ?: rawSample.copy(
+        val sample = factory?.calibrateFactory(rawSample) ?: rawSample.copy(
             accelerationMetersPerSecondSquared = FloatArray(3) {
                 rawSample.accelerationMetersPerSecondSquared[it] * STANDARD_GRAVITY
             },
         )
-        val factoryMagnetic = sample.magneticField ?: return sample
-        val update = magneticCalibrator.update(factoryMagnetic)
-        reportMagneticProgress(update)
-        val next = update.calibration
-        if (next != null && magneticCalibration == null) {
-            magneticCalibration = next
-            RayneoMagneticCalibrationStore.save(magneticCalibrationStoreKey, next)
-            factory?.let { calibration ->
-                executor.execute { listener.onImuCalibration(calibration.publicData(next)) }
-            }
-            status("${model.displayName} 磁力计 host 三轴椭球校准完成并已保存")
-        }
-        val activeHostCalibration = magneticCalibration ?: next
-        sample = sample.copy(
-            magneticField = if (update.usable) activeHostCalibration?.apply(factoryMagnetic) ?: factoryMagnetic else null,
-            calibration = if (factory != null) {
-                VitureV2Calibration.calibrationState(activeHostCalibration != null)
-            } else {
-                ImuCalibrationState(
-                    magnetometer = if (activeHostCalibration != null) {
-                        ImuCalibrationLevel.HOST_ESTIMATED
-                    } else {
-                        ImuCalibrationLevel.NONE
-                    },
-                )
-            },
-        )
         return sample
-    }
-
-    private fun reportMagneticProgress(update: RayneoMagneticUpdate) {
-        val progress = update.progress
-        if (progress.phase != lastProgressPhase ||
-            progress.acceptedSamples - lastProgressSamples >= HOST_CALIBRATION_PROGRESS_INTERVAL
-        ) {
-            lastProgressPhase = progress.phase
-            lastProgressSamples = progress.acceptedSamples
-            executor.execute { listener.onImuHostCalibrationProgress(progress) }
-        }
     }
 
     private fun readFactoryCalibration(): VitureV2Calibration? = runCatching {
@@ -342,19 +286,6 @@ internal class VitureBeastSession(
 
     private fun status(message: String) = executor.execute { listener.onStatus(message) }
 
-    override fun resetHostImuCalibration(): Boolean {
-        RayneoMagneticCalibrationStore.clear(magneticCalibrationStoreKey)
-        magneticCalibration = null
-        magneticCalibrator.reset()
-        lastProgressSamples = -HOST_CALIBRATION_PROGRESS_INTERVAL
-        lastProgressPhase = null
-        factoryCalibration?.let { calibration ->
-            executor.execute { listener.onImuCalibration(calibration.publicData(null)) }
-        }
-        status("${model.displayName} 已清除磁力计 host 校准；请缓慢绕三个轴旋转眼镜")
-        return true
-    }
-
     override fun close() {
         if (!running.getAndSet(false)) return
         if (imuEnabled) runCatching { send(VitureBeastProtocol.command(0x0301, byteArrayOf(0, 0))) }
@@ -373,7 +304,6 @@ internal class VitureBeastSession(
         const val CALIBRATION_PACKET_HEADER_SIZE = 8
         const val CALIBRATION_READ_TIMEOUT_MS = 90
         const val CALIBRATION_RESPONSE_TIMEOUT_NANOS = 2_000_000_000L
-        const val HOST_CALIBRATION_PROGRESS_INTERVAL = 100
         const val MAX_CALIBRATION_SEGMENTS = 1_024
         const val STANDARD_GRAVITY = 9.80665f
     }

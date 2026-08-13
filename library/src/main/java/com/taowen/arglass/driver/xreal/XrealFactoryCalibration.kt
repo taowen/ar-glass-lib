@@ -68,6 +68,7 @@ internal class XrealFactoryCalibration private constructor(
         gyroscopeCorrectionMatrix = gyroscopeMatrix.copyOf(),
         magnetometerCorrectionMatrix = hostMagnetic?.correctionMatrix?.copyOf()
             ?: sensorMatrixToRuntime(magneticMatrix),
+        gyroscopeAccelerationSensitivityMatrix = gyroscopeGSensitivity.copyOf(),
     )
 
     private fun calibrationState(hasMagnetometer: Boolean, hasHostMagnetic: Boolean) = ImuCalibrationState(

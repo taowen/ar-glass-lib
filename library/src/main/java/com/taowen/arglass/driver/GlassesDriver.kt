@@ -11,6 +11,7 @@ import com.taowen.arglass.driver.viture.beast.VitureBeastDriver
 import com.taowen.arglass.driver.goovis.g3family.GoovisG3FamilyDriver
 import com.taowen.arglass.driver.luci.LuciDriver
 import com.taowen.arglass.driver.rokid.air.RokidAirDriver
+import com.taowen.arglass.driver.rokid.max2.RokidMax2Driver
 import com.taowen.arglass.driver.xreal.air2ultra.XrealAir2UltraDriver
 import com.taowen.arglass.driver.xreal.air.XrealAirDriver
 import com.taowen.arglass.driver.xreal.air2.XrealAir2Driver
@@ -99,6 +100,7 @@ internal object GlassesDriverRegistry {
         XrealOneProDriver,
         XrealOneDriver,
         XrealOneSDriver,
+        RokidMax2Driver,
         RokidAirDriver,
         VitureBeastDriver,
         LuciDriver,

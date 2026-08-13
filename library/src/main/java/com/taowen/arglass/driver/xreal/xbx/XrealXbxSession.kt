@@ -133,7 +133,10 @@ internal class XrealXbxSession(
             "Incomplete IMU calibration ${calibrationBytes.size()}/$expected"
         }
         val calibration = XrealXbxCalibration.parse(calibrationBytes.toByteArray())
-        status("IMU 校准数据：${calibrationBytes.size()} / $expected bytes；已应用温漂和三轴偏置")
+        status(
+            "IMU 校准数据：${calibrationBytes.size()} / $expected bytes；" +
+                "已应用三轴偏置、scale/skew、传感器对齐、温漂和陀螺仪重力敏感度",
+        )
         return calibration
     }
 

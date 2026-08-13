@@ -37,8 +37,9 @@ data class TemperatureGyroscopeBias(
 )
 
 /**
- * Calibration parameters owned and already applied by the driver. All vectors use the same
- * runtime coordinate system and SI units as [ImuSample]; consumers must not apply them again.
+ * Calibration parameters owned and already applied by the driver/device. All vectors use the
+ * same runtime coordinate system and SI units as [ImuSample]; consumers must not apply them
+ * again. [parametersAppliedByDevice] means the coefficients remain opaque to the host.
  */
 data class ImuCalibrationData(
     val source: ImuCalibrationSource,
@@ -52,6 +53,10 @@ data class ImuCalibrationData(
     val accelerometerCorrectionMatrix: FloatArray? = null,
     val gyroscopeCorrectionMatrix: FloatArray? = null,
     val magnetometerCorrectionMatrix: FloatArray? = null,
+    /** Row-major matrix mapping calibrated acceleration to gyroscope rate bias. */
+    val gyroscopeAccelerationSensitivityMatrix: FloatArray? = null,
+    /** True when the device/firmware already applied opaque factory coefficients. */
+    val parametersAppliedByDevice: Boolean = false,
 )
 
 data class ImuTrackingSupport(
@@ -123,9 +128,25 @@ data class ImuSample(
     val magneticField: FloatArray?,
     val temperatureCelsius: Float,
     val reportVersion: Int,
-    /** Android monotonic-clock time captured by the driver immediately after the USB read. */
+    /** Android monotonic-clock time captured by the driver immediately after the transport read. */
     val hostTimestampNanos: Long = System.nanoTime(),
     val calibration: ImuCalibrationState = ImuCalibrationState(),
+    /** Optional transport fields retained from an extended device IMU carrier. */
+    val transportMetadata: ImuTransportMetadata? = null,
+)
+
+/** Extended timing/scaling fields transported alongside an IMU sample. */
+data class ImuTransportMetadata(
+    val systemTimestampNanos: Long? = null,
+    val sensorTimestampNanos: Long? = null,
+    val dataMask: Int? = null,
+    val imuId: Int? = null,
+    val frameId: Long? = null,
+    val gyroscopeNumerator: Float? = null,
+    val accelerometerNumerator: Float? = null,
+    val magnetometerNumerator: Float? = null,
+    val outputNumeratorMask: Int? = null,
+    val groupDelay: Float? = null,
 )
 
 object ArGlassesCatalog {

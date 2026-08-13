@@ -13,7 +13,7 @@ import java.util.concurrent.Executor
 internal object RokidAirDriver : GlassesDriver {
     override val id = "rokid_air"
     private const val VID = 0x04d2
-    private val productIds = setOf(0x162b, 0x162c, 0x162d, 0x162e, 0x162f, 0x2002, 0x2180)
+    private val productIds = setOf(0x162b, 0x162c, 0x162d, 0x162e, 0x162f, 0x2180)
 
     override fun identify(device: UsbDevice): GlassesModel? {
         if (device.vendorId != VID || device.productId !in productIds) return null

@@ -6,7 +6,6 @@ import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuSample
 import com.taowen.arglass.TemperatureGyroscopeBias
-import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibration
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
@@ -49,27 +48,22 @@ internal class VitureV2Calibration private constructor(
         )
     }
 
-    fun publicData(hostMagnetic: RayneoMagneticCalibration?): ImuCalibrationData {
+    fun publicData(): ImuCalibrationData {
         val accelerationCorrection = scale(accelerometerMatrix, accelerometerScale)
         val factoryMagneticBias = transform(magnetometerMatrix, magnetometerBias)
-        val effectiveMagneticMatrix = hostMagnetic?.let { multiply(it.correctionMatrix, magnetometerMatrix) }
-            ?: magnetometerMatrix
-        val effectiveMagneticBias = hostMagnetic?.let {
-            transform(it.correctionMatrix, add(factoryMagneticBias, it.bias))
-        } ?: factoryMagneticBias
         return ImuCalibrationData(
-            source = if (hostMagnetic == null) ImuCalibrationSource.DEVICE_FACTORY else ImuCalibrationSource.MIXED,
-            state = calibrationState(hostMagnetic != null),
+            source = ImuCalibrationSource.DEVICE_FACTORY,
+            state = FACTORY_STATE,
             accelerometerBiasMetersPerSecondSquared = transform(accelerationCorrection, accelerometerBias),
             gyroscopeBiasRadiansPerSecond = transform(gyroscopeMatrix, gyroscopeBias),
-            magnetometerBias = effectiveMagneticBias,
+            magnetometerBias = factoryMagneticBias,
             gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
                 TemperatureGyroscopeBias(it.temperatureCelsius, transform(gyroscopeMatrix, it.bias))
             },
             noiseStandardDeviations = noiseStandardDeviations.copyOf(),
             accelerometerCorrectionMatrix = accelerationCorrection.copyOf(),
             gyroscopeCorrectionMatrix = gyroscopeMatrix.copyOf(),
-            magnetometerCorrectionMatrix = effectiveMagneticMatrix.copyOf(),
+            magnetometerCorrectionMatrix = magnetometerMatrix.copyOf(),
         )
     }
 
@@ -137,10 +131,6 @@ internal class VitureV2Calibration private constructor(
             }
         }
 
-        fun calibrationState(hostMagneticReady: Boolean) = FACTORY_STATE.copy(
-            magnetometer = if (hostMagneticReady) ImuCalibrationLevel.HOST_ESTIMATED else ImuCalibrationLevel.FACTORY,
-        )
-
         private fun parseTemperatureBiases(packet: ByteArray?): List<TemperatureBias> {
             if (packet == null || packet.size < TEMPERATURE_HEADER_SIZE) return emptyList()
             val buffer = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
@@ -185,7 +175,6 @@ internal class VitureV2Calibration private constructor(
         }
 
         private fun subtract(left: FloatArray, right: FloatArray) = FloatArray(3) { left[it] - right[it] }
-        private fun add(left: FloatArray, right: FloatArray) = FloatArray(3) { left[it] + right[it] }
         private fun scale(matrix: FloatArray, value: Float) = FloatArray(9) { matrix[it] * value }
 
         private const val IMU_PACKET_SIZE = 124
