@@ -13,7 +13,7 @@ internal class XrealXbxCalibration private constructor(
     val centerDisplayFov get() = factory.centerDisplayFov
     fun publicData(): ImuCalibrationData = factory.publicData()
 
-    fun calibrate(sample: ImuSample): ImuSample = factory.calibrate(sample, hostMagnetic = null)
+    fun calibrate(sample: ImuSample): ImuSample = factory.calibrateXbx(sample)
 
     companion object {
         val FACTORY_CALIBRATION = ImuCalibrationState(
