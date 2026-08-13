@@ -23,5 +23,6 @@ internal object XrealOneFactoryCalibration {
         gyroscopeBiasRadiansPerSecond = FloatArray(3),
         magnetometerBias = null,
         parametersAppliedByDevice = true,
+        parametersAppliedToSamples = true,
     )
 }

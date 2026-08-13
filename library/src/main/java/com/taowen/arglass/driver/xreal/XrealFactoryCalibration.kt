@@ -4,14 +4,12 @@ import com.taowen.arglass.ImuCalibrationData
 import com.taowen.arglass.ImuCalibrationLevel
 import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
-import com.taowen.arglass.ImuSample
 import com.taowen.arglass.TemperatureGyroscopeBias
 import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibration
 import org.json.JSONArray
 import org.json.JSONObject
-import kotlin.math.round
 
-/** Host-side application of the factory JSON returned by XREAL IMU commands 0x14/0x15. */
+/** Factory JSON returned by XREAL IMU commands 0x14/0x15. Drivers publish these coefficients and leave decoded SI samples untouched. */
 internal class XrealFactoryCalibration private constructor(
     private val accelerationBias: FloatArray,
     private val gyroscopeBias: FloatArray,
@@ -24,64 +22,10 @@ internal class XrealFactoryCalibration private constructor(
     val noiseStandardDeviations: FloatArray,
     val centerDisplayFov: com.taowen.arglass.GlassesTangentFov?,
 ) {
-    // NR keeps the currently selected temperature bias in the per-device
-    // calibration object. Table mode looks up the sample's rounded Celsius
-    // value exactly; a missing key retains the preceding selection.
-    private var selectedGyroscopeTemperatureBias = gyroscopeBias
-
-    fun calibrate(
-        sample: ImuSample,
-        hostMagnetic: RayneoMagneticCalibration?,
-        subtractFactoryMagneticBias: Boolean = true,
-    ): ImuSample {
-        val acceleration = subtract(transform(accelerationMatrix, sample.accelerationMetersPerSecondSquared), accelerationBias)
-        val roundedTemperature = round(sample.temperatureCelsius)
-        if (roundedTemperature.isFinite()) {
-            gyroscopeTemperatureBiases.firstOrNull {
-                round(it.temperatureCelsius) == roundedTemperature
-            }?.let { selectedGyroscopeTemperatureBias = it.bias }
-        }
-        val gravitySensitiveBias = transform(gyroscopeGSensitivity, acceleration)
-        val angularVelocity = subtract(
-            subtract(
-                transform(gyroscopeMatrix, sample.angularVelocityRadiansPerSecond),
-                selectedGyroscopeTemperatureBias,
-            ),
-            gravitySensitiveBias,
-        )
-        val magneticField = sample.magneticField?.let { sensorMagnetic ->
-            val magneticInput = if (subtractFactoryMagneticBias) {
-                subtract(sensorMagnetic, magneticBias)
-            } else {
-                sensorMagnetic
-            }
-            val runtimeMagnetic = sensorToRuntime(
-                transform(magneticMatrix, magneticInput),
-            )
-            hostMagnetic?.apply(runtimeMagnetic) ?: runtimeMagnetic
-        }
-        return sample.copy(
-            accelerationMetersPerSecondSquared = acceleration,
-            angularVelocityRadiansPerSecond = angularVelocity,
-            magneticField = magneticField,
-            calibration = calibrationState(sample.magneticField != null, hostMagnetic != null),
-        )
-    }
-
-    /** XBX/NR 3.1 feeds M*raw into its learned device-fixed magnetic state. */
-    fun calibrateXbx(sample: ImuSample): ImuSample = calibrate(
-        sample = sample,
-        hostMagnetic = null,
-        subtractFactoryMagneticBias = false,
-    )
-
-    fun runtimeMagnetic(sample: ImuSample): FloatArray? = sample.magneticField?.let { sensorMagnetic ->
-        sensorToRuntime(transform(magneticMatrix, subtract(sensorMagnetic, magneticBias)))
-    }
-
     fun publicData(
         hostMagnetic: RayneoMagneticCalibration? = null,
         hasMagnetometer: Boolean = true,
+        parametersAppliedToSamples: Boolean = false,
     ): ImuCalibrationData = ImuCalibrationData(
         source = if (hostMagnetic == null) ImuCalibrationSource.DEVICE_FACTORY else ImuCalibrationSource.MIXED,
         state = calibrationState(hasMagnetometer, hostMagnetic != null),
@@ -97,6 +41,7 @@ internal class XrealFactoryCalibration private constructor(
         magnetometerCorrectionMatrix = hostMagnetic?.correctionMatrix?.copyOf()
             ?: sensorMatrixToRuntime(magneticMatrix),
         gyroscopeAccelerationSensitivityMatrix = gyroscopeGSensitivity.copyOf(),
+        parametersAppliedToSamples = parametersAppliedToSamples,
     )
 
     private fun calibrationState(hasMagnetometer: Boolean, hasHostMagnetic: Boolean) = ImuCalibrationState(

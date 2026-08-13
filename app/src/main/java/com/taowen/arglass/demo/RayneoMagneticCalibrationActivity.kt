@@ -86,7 +86,7 @@ class RayneoMagneticCalibrationActivity : UsbCheckActivity() {
     override fun onImuCalibration(calibration: ImuCalibrationData) {
         if (!::progressText.isInitialized || calibration.state.magnetometer != ImuCalibrationLevel.HOST_ESTIMATED) return
         progressBar.progress = progressBar.max
-        progressText.text = "校准完成，完整 3×3 hard/soft-iron 修正矩阵已保存。可以返回并使用九轴 3DoF。"
+        progressText.text = "校准完成，完整 3×3 hard/soft-iron 系数已保存并发布。样本保持协议解码后的 SI 数值。"
     }
 
     override fun onImuSample(sample: ImuSample) {
@@ -94,7 +94,7 @@ class RayneoMagneticCalibrationActivity : UsbCheckActivity() {
         if (samples % 10 != 0L || !::fieldText.isInitialized) return
         val magnetic = sample.magneticField
         fieldText.text = if (magnetic == null) {
-            if (latestProgress?.phase == ImuHostCalibrationPhase.DISTURBED) "磁场：受扰，当前按六轴输出" else "磁场：不可用"
+            if (latestProgress?.phase == ImuHostCalibrationPhase.DISTURBED) "磁场：受扰，当前样本未改写" else "磁场：不可用"
         } else {
             val magnitude = sqrt(magnetic.sumOf { (it * it).toDouble() })
             String.format(

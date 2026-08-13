@@ -37,9 +37,11 @@ data class TemperatureGyroscopeBias(
 )
 
 /**
- * Calibration parameters owned and already applied by the driver/device. All vectors use the
- * same runtime coordinate system and SI units as [ImuSample]; consumers must not apply them
- * again. [parametersAppliedByDevice] means the coefficients remain opaque to the host.
+ * Factory/host calibration parameters accompanying [ImuSample]. All vectors use the same
+ * runtime coordinate system and SI units as the sample. Transport drivers may expose raw SI
+ * samples and leave calibration to an estimator; [parametersAppliedToSamples] says whether the
+ * advertised coefficients have already been applied. [parametersAppliedByDevice] is the
+ * narrower case where firmware applied opaque coefficients before the host received the data.
  */
 data class ImuCalibrationData(
     val source: ImuCalibrationSource,
@@ -57,6 +59,8 @@ data class ImuCalibrationData(
     val gyroscopeAccelerationSensitivityMatrix: FloatArray? = null,
     /** True when the device/firmware already applied opaque factory coefficients. */
     val parametersAppliedByDevice: Boolean = false,
+    /** True when the emitted [ImuSample] values already include these corrections. */
+    val parametersAppliedToSamples: Boolean = true,
 )
 
 data class ImuTrackingSupport(

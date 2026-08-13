@@ -79,7 +79,7 @@ internal class XrealAirFamilySession(
             val started = usb.imu(0x19, byteArrayOf(1))
             status(if (started.isEmpty()) "IMU 启动命令未收到响应；继续被动监听" else "IMU 已启动")
             while (running.get()) {
-                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)?.let(::calibrate)
+                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)?.let(::observeMagnetic)
                     ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Throwable) {
@@ -100,24 +100,25 @@ internal class XrealAirFamilySession(
             bytes.write(part, 9, minOf(part.size - 9, total - bytes.size()))
         }
         check(bytes.size() == total) { "IMU 校准数据不完整：${bytes.size()} / $total bytes" }
-        status("IMU 校准数据：${bytes.size()} / $total bytes；已应用矩阵、偏置、温漂和重力敏感项")
+        status(
+            "IMU 校准数据：${bytes.size()} / $total bytes；" +
+                "已发布矩阵、偏置、温漂和重力敏感项；IMU 样本保持协议解码后的 SI 数值",
+        )
         return XrealFactoryCalibration.parse(bytes.toByteArray())
     }
 
-    private fun calibrate(sample: ImuSample): ImuSample {
-        val factory = requireNotNull(factoryCalibration)
-        factory.runtimeMagnetic(sample)?.let { magnetic ->
-            val update = magneticCalibrator.update(magnetic)
-            reportMagneticProgress(update.progress.phase, update.progress.acceptedSamples, update)
-            if (update.calibration != null && magneticCalibration == null) {
-                magneticCalibration = update.calibration
-                RayneoMagneticCalibrationStore.save(calibrationStoreKey, update.calibration)
-                executor.execute { listener.onImuCalibration(factory.publicData(update.calibration, hasMagnetometer = true)) }
-                status("${model.displayName} 磁力计 host 三轴椭球校准完成并已保存")
-            }
-            if (!update.usable) return factory.calibrate(sample.copy(magneticField = null), magneticCalibration)
+    private fun observeMagnetic(sample: ImuSample): ImuSample {
+        val factory = factoryCalibration ?: return sample
+        val magnetic = sample.magneticField ?: return sample
+        val update = magneticCalibrator.update(magnetic)
+        reportMagneticProgress(update.progress.phase, update.progress.acceptedSamples, update)
+        if (update.calibration != null && magneticCalibration == null) {
+            magneticCalibration = update.calibration
+            RayneoMagneticCalibrationStore.save(calibrationStoreKey, update.calibration)
+            executor.execute { listener.onImuCalibration(factory.publicData(update.calibration, hasMagnetometer = true)) }
+            status("${model.displayName} 磁力计 host 三轴椭球校准完成并已保存")
         }
-        return factory.calibrate(sample, magneticCalibration)
+        return sample
     }
 
     private fun reportMagneticProgress(

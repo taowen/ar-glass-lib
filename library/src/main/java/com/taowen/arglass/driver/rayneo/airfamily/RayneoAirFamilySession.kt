@@ -249,7 +249,7 @@ internal class RayneoAirFamilySession(
             }
         }
         factoryCalibrationReady.countDown()
-        status("${resolvedModel?.displayName} 已加载 USB 0x3c IMU 工厂校准；请绕三轴旋转以校准磁力计")
+        status("${resolvedModel?.displayName} 已发布 USB 0x3c IMU 工厂校准；样本保持协议解码后的 SI 数值；请绕三轴旋转以校准磁力计")
     }
 
     @Synchronized
@@ -312,7 +312,7 @@ internal class RayneoAirFamilySession(
             executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
         }
         gyroscopeTemperatureBiasesReady.countDown()
-        status("${resolvedModel?.displayName} 已加载 USB 0x3e 的 $GYROSCOPE_TEMPERATURE_COUNT 点陀螺仪温度 bias 表")
+        status("${resolvedModel?.displayName} 已发布 USB 0x3e 的 $GYROSCOPE_TEMPERATURE_COUNT 点陀螺仪温度 bias 表")
     }
 
     private fun resolvedModel(detectedModel: String, boardId: Int): GlassesModel {
@@ -355,16 +355,11 @@ internal class RayneoAirFamilySession(
             null
         }
 
-        val factory = factoryCalibration
-        val acceleration = factory?.acceleration(rawAcceleration) ?: rawAcceleration
-        val angularVelocity = factory?.angularVelocity(rawGyroscope, temperatureCelsius) ?: rawGyroscope.also { value ->
-            val radiansPerDegree = (PI / 180.0).toFloat()
-            value.indices.forEach { value[it] *= radiansPerDegree }
-        }
+        val radiansPerDegree = (PI / 180.0).toFloat()
+        val angularVelocity = FloatArray(3) { rawGyroscope[it] * radiansPerDegree }
 
-        var magnetic = rawMagnetic
-        if (magnetic != null) {
-            val update = magneticCalibrator.update(magnetic)
+        if (rawMagnetic != null) {
+            val update = magneticCalibrator.update(rawMagnetic)
             reportMagneticProgress(update)
             val next = update.calibration
             if (next != null && magneticCalibration == null) {
@@ -373,27 +368,16 @@ internal class RayneoAirFamilySession(
                 reportCalibration(next)
                 status("${model.displayName} 磁力计 host 三轴椭球校准完成并已保存")
             }
-            magnetic = if (update.usable) (magneticCalibration ?: next)?.apply(magnetic) ?: magnetic else null
         }
 
-        val calibrationState = ImuCalibrationState(
-            accelerometer = if (factory != null) ImuCalibrationLevel.FACTORY else ImuCalibrationLevel.NONE,
-            gyroscope = if (factory != null) ImuCalibrationLevel.FACTORY else ImuCalibrationLevel.NONE,
-            magnetometer = if (magneticCalibration != null) {
-                ImuCalibrationLevel.HOST_ESTIMATED
-            } else {
-                ImuCalibrationLevel.NONE
-            },
-        )
         return ImuSample(
             deviceTimestampNanos = (buffer.getInt(40).toLong() and 0xffffffffL) * DEVICE_TICK_NANOS,
-            accelerationMetersPerSecondSquared = acceleration,
+            accelerationMetersPerSecondSquared = rawAcceleration,
             angularVelocityRadiansPerSecond = angularVelocity,
-            magneticField = magnetic,
+            magneticField = rawMagnetic,
             temperatureCelsius = temperatureCelsius,
             reportVersion = 1,
             hostTimestampNanos = hostTimestampNanos,
-            calibration = calibrationState,
         )
     }
 
@@ -427,6 +411,7 @@ internal class RayneoAirFamilySession(
                     accelerometerBiasMetersPerSecondSquared = FloatArray(3),
                     gyroscopeBiasRadiansPerSecond = FloatArray(3),
                     magnetometerBias = null,
+                    parametersAppliedToSamples = false,
                 ),
             )
         }

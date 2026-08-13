@@ -8,7 +8,6 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
-import com.taowen.arglass.ImuSample
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.NativeUsbDeviceSession
@@ -65,7 +64,7 @@ internal class VitureBeastSession(
                 if (factoryCalibration == null) {
                     "${model.displayName} RAW IMU 已请求（120 Hz），设备未返回完整九轴出厂校准"
                 } else {
-                    "${model.displayName} 已加载九轴出厂校准并请求 RAW IMU（120 Hz）"
+                    "${model.displayName} 已发布九轴出厂校准并请求 RAW IMU（120 Hz）；样本保持协议解码后的 SI 数值"
                 },
             )
         }
@@ -148,8 +147,8 @@ internal class VitureBeastSession(
     }
 
     private fun handlePacket(bytes: ByteArray, length: Int, hostTimestampNanos: Long = System.nanoTime()) {
-        VitureBeastProtocol.decodeImu(bytes, length, hostTimestampNanos)?.let { rawSample ->
-            executor.execute { listener.onImuSample(calibrate(rawSample)) }
+        VitureBeastProtocol.decodeImu(bytes, length, hostTimestampNanos)?.let { sample ->
+            executor.execute { listener.onImuSample(sample) }
             return
         }
         val packet = VitureBeastProtocol.decode(bytes, length) ?: return
@@ -166,16 +165,6 @@ internal class VitureBeastSession(
             }
             responseLock.notifyAll()
         }
-    }
-
-    private fun calibrate(rawSample: ImuSample): ImuSample {
-        val factory = factoryCalibration
-        val sample = factory?.calibrateFactory(rawSample) ?: rawSample.copy(
-            accelerationMetersPerSecondSquared = FloatArray(3) {
-                rawSample.accelerationMetersPerSecondSquared[it] * STANDARD_GRAVITY
-            },
-        )
-        return sample
     }
 
     private fun readFactoryCalibration(): VitureV2Calibration? = runCatching {
@@ -305,6 +294,5 @@ internal class VitureBeastSession(
         const val CALIBRATION_READ_TIMEOUT_MS = 90
         const val CALIBRATION_RESPONSE_TIMEOUT_NANOS = 2_000_000_000L
         const val MAX_CALIBRATION_SEGMENTS = 1_024
-        const val STANDARD_GRAVITY = 9.80665f
     }
 }

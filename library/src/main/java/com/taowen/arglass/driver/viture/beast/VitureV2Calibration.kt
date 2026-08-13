@@ -4,11 +4,9 @@ import com.taowen.arglass.ImuCalibrationData
 import com.taowen.arglass.ImuCalibrationLevel
 import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
-import com.taowen.arglass.ImuSample
 import com.taowen.arglass.TemperatureGyroscopeBias
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.abs
 
 /** Factory sensor calibration returned by the V2 0x3302..0x3306 long-packet commands. */
 internal class VitureV2Calibration private constructor(
@@ -24,37 +22,18 @@ internal class VitureV2Calibration private constructor(
     private val magnetometerTemperatureBiases: List<TemperatureBias>,
     private val noiseStandardDeviations: FloatArray,
 ) {
-    fun calibrateFactory(sample: ImuSample): ImuSample {
-        val temperature = sample.temperatureCelsius
-        val gyroBiasAtTemperature = nearestBias(gyroscopeTemperatureBiases, temperature) ?: gyroscopeBias
-        val accelerationBiasAtTemperature = nearestBias(accelerometerTemperatureBiases, temperature) ?: accelerometerBias
-        val magneticBiasAtTemperature = nearestBias(magnetometerTemperatureBiases, temperature) ?: magnetometerBias
-        val acceleration = transform(
-            accelerometerMatrix,
-            subtract(sample.accelerationMetersPerSecondSquared, accelerationBiasAtTemperature),
-        ).also { vector -> vector.indices.forEach { vector[it] *= accelerometerScale } }
-        val gyroscope = transform(
-            gyroscopeMatrix,
-            subtract(sample.angularVelocityRadiansPerSecond, gyroBiasAtTemperature),
-        )
-        val magnetic = sample.magneticField?.let {
-            transform(magnetometerMatrix, subtract(it, magneticBiasAtTemperature))
-        }
-        return sample.copy(
-            accelerationMetersPerSecondSquared = acceleration,
-            angularVelocityRadiansPerSecond = gyroscope,
-            magneticField = magnetic,
-            calibration = FACTORY_STATE,
-        )
-    }
-
     fun publicData(): ImuCalibrationData {
-        val accelerationCorrection = scale(accelerometerMatrix, accelerometerScale)
+        // decodeImu already converts report g units with STANDARD_GRAVITY.
+        // Keep the remaining factory scale as a correction on those SI samples.
+        val accelerationCorrection = scale(accelerometerMatrix, accelerometerScale / STANDARD_GRAVITY)
         val factoryMagneticBias = transform(magnetometerMatrix, magnetometerBias)
         return ImuCalibrationData(
             source = ImuCalibrationSource.DEVICE_FACTORY,
             state = FACTORY_STATE,
-            accelerometerBiasMetersPerSecondSquared = transform(accelerationCorrection, accelerometerBias),
+            accelerometerBiasMetersPerSecondSquared = transform(
+                scale(accelerometerMatrix, accelerometerScale),
+                accelerometerBias,
+            ),
             gyroscopeBiasRadiansPerSecond = transform(gyroscopeMatrix, gyroscopeBias),
             magnetometerBias = factoryMagneticBias,
             gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
@@ -64,11 +43,9 @@ internal class VitureV2Calibration private constructor(
             accelerometerCorrectionMatrix = accelerationCorrection.copyOf(),
             gyroscopeCorrectionMatrix = gyroscopeMatrix.copyOf(),
             magnetometerCorrectionMatrix = magnetometerMatrix.copyOf(),
+            parametersAppliedToSamples = false,
         )
     }
-
-    private fun nearestBias(values: List<TemperatureBias>, temperature: Float): FloatArray? =
-        values.minByOrNull { abs(it.temperatureCelsius - temperature) }?.bias
 
     private data class TemperatureBias(val temperatureCelsius: Float, val bias: FloatArray)
 
@@ -174,7 +151,6 @@ internal class VitureV2Calibration private constructor(
             (0..2).sumOf { middle -> (left[row * 3 + middle] * right[middle * 3 + column]).toDouble() }.toFloat()
         }
 
-        private fun subtract(left: FloatArray, right: FloatArray) = FloatArray(3) { left[it] - right[it] }
         private fun scale(matrix: FloatArray, value: Float) = FloatArray(9) { matrix[it] * value }
 
         private const val IMU_PACKET_SIZE = 124

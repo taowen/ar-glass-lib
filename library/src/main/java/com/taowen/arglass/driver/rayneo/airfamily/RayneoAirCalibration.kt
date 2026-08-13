@@ -25,15 +25,6 @@ internal data class RayneoFactoryCalibration(
         require(accelerationOffset.size == 3)
     }
 
-    fun acceleration(raw: FloatArray): FloatArray = add(transform(raw), accelerationOffset)
-
-    fun angularVelocity(rawDegreesPerSecond: FloatArray, temperatureCelsius: Float): FloatArray {
-        val bias = gyroscopeTemperatureBiases.minByOrNull {
-            abs(it.temperatureCelsius - temperatureCelsius)
-        }?.biasDegreesPerSecond ?: ZERO_VECTOR
-        return radians(transform(subtract(rawDegreesPerSecond, bias)))
-    }
-
     fun publicData(magnetic: RayneoMagneticCalibration? = null): ImuCalibrationData {
         val magneticReady = magnetic != null
         val nominalGyroscopeBias = gyroscopeTemperatureBiases.minByOrNull {
@@ -55,6 +46,7 @@ internal data class RayneoFactoryCalibration(
             accelerometerCorrectionMatrix = publicCorrectionMatrix(),
             gyroscopeCorrectionMatrix = publicCorrectionMatrix(),
             magnetometerCorrectionMatrix = magnetic?.correctionMatrix?.copyOf(),
+            parametersAppliedToSamples = false,
         )
     }
 
@@ -69,12 +61,6 @@ internal data class RayneoFactoryCalibration(
         sensorTransform[1], sensorTransform[4], sensorTransform[7],
         sensorTransform[2], sensorTransform[5], sensorTransform[8],
     )
-
-    private fun add(left: FloatArray, right: FloatArray): FloatArray =
-        FloatArray(3) { left[it] + right[it] }
-
-    private fun subtract(left: FloatArray, right: FloatArray): FloatArray =
-        FloatArray(3) { left[it] - right[it] }
 
     private fun radians(value: FloatArray): FloatArray = value.also { radians ->
         val radiansPerDegree = (PI / 180.0).toFloat()
@@ -114,6 +100,7 @@ internal data class RayneoMagneticCalibration(
         gyroscopeBiasRadiansPerSecond = FloatArray(3),
         magnetometerBias = bias.copyOf(),
         magnetometerCorrectionMatrix = correctionMatrix.copyOf(),
+        parametersAppliedToSamples = false,
     )
 }
 

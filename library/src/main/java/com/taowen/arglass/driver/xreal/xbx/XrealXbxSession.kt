@@ -107,7 +107,7 @@ internal class XrealXbxSession(
                 usb.readImu()?.takeIf { it.size == 64 }?.let { report ->
                     // Match the selected NR 3.1 receiver: capture Android's
                     // CLOCK_MONOTONIC at the USB boundary, before report
-                    // decoding and factory calibration add latency.
+                    // decoding adds latency.
                     // System.nanoTime() is the Java boundary for that clock;
                     // elapsedRealtimeNanos() uses CLOCK_BOOTTIME and diverges
                     // by accumulated suspend time on long-running phones.
@@ -115,9 +115,7 @@ internal class XrealXbxSession(
                     decodeXrealImuReport(report)?.copy(
                         hostTimestampNanos = hostArrivalTimeNanos,
                     )
-                }
-                    ?.let { sample -> imuCalibration?.calibrate(sample) ?: sample }
-                    ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
+                }?.let { sample -> executor.execute { listener.onImuSample(sample) } }
             }
         } catch (error: Throwable) {
             if (running.get()) status("${model.displayName} IMU 会话失败：${error.message}")
@@ -144,7 +142,8 @@ internal class XrealXbxSession(
         val calibration = XrealXbxCalibration.parse(calibrationBytes.toByteArray())
         status(
             "IMU 校准数据：${calibrationBytes.size()} / $expected bytes；" +
-                "已应用三轴偏置、scale/skew、传感器对齐、温漂和陀螺仪重力敏感度",
+                "已发布三轴偏置、scale/skew、传感器对齐、温漂和陀螺仪重力敏感度；" +
+                    "IMU 样本保持协议解码后的 SI 数值，由姿态算法选择如何应用",
         )
         return calibration
     }

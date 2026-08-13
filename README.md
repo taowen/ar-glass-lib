@@ -32,7 +32,7 @@ Supported models:
 - Identify the glasses model from Android USB Host descriptors.
 - Read versioned XREAL IMU reports (acceleration, angular velocity, magnetic field, temperature, and device timestamp).
 - Declare whether a model supplies six- or nine-axis tracking and the calibration level of each sensor.
-- Keep factory calibration acquisition and application inside the driver while exposing the applied SI-unit parameters through `onImuCalibration` for diagnostics.
+- Acquire factory and host calibration coefficients in the driver and expose them through `onImuCalibration`. Decoded SI samples stay raw; estimators decide whether to apply those coefficients. `parametersAppliedToSamples=false` marks that split. `parametersAppliedByDevice=true` is the narrower firmware-applied case.
 - Query and switch 2D, Half SBS, Full SBS, and high-refresh SBS display modes.
 - List and switch glasses-native display profiles using common width, height, refresh-rate, and 2D/3D layout metadata while keeping each vendor's protocol value inside its driver.
 - Expose capability metadata for host apps that need to correlate glasses models with Android external-display information.
@@ -153,25 +153,26 @@ val profile = connected.model.supportedDisplayProfiles.firstOrNull {
 if (profile != null) session.setDisplayProfile(profile)
 ```
 
-`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time; `hostTimestampNanos` is captured immediately after the transport read so latency-sensitive consumers do not have to timestamp a delayed callback. `calibration` states which corrections the driver has already applied. `onImuCalibration` exposes those applied parameters for inspection when the transport makes them available; `parametersAppliedByDevice=true` identifies opaque device-side coefficients. Consumers must not apply either form a second time. Extended carriers can expose their timing/scaling fields through `transportMetadata`.
+`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time; `hostTimestampNanos` is captured immediately after the transport read so latency-sensitive consumers do not have to timestamp a delayed callback. Transport decoding covers units and the runtime axis convention only. `sample.calibration` states which corrections are already present in that sample. `onImuCalibration` publishes factory or host coefficients when the transport makes them available; `parametersAppliedToSamples` says whether those coefficients have already been applied, and `parametersAppliedByDevice=true` identifies opaque firmware-applied coefficients. Consumers must not apply an already-applied set a second time. Extended carriers can expose their timing/scaling fields through `transportMetadata`.
 
-XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer/gyroscope/magnetometer biases, per-sensor scale/skew matrices, `accel_q_gyro`/`gyro_q_mag` alignment, gyroscope gravity sensitivity, temperature-indexed gyroscope biases, and noise values, then restart streaming. Selection of the nearest temperature point, all matrix/bias corrections, SI units, and sensor-to-runtime axis mapping remain inside the XBX driver. A captured XBX A01 factory blob carries the complete schema but uses identity scale/alignment and zero skew/gravity-sensitivity values; those neutral values must not be assumed for A01 Plus or other units.
+XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer/gyroscope/magnetometer biases, per-sensor scale/skew matrices, `accel_q_gyro`/`gyro_q_mag` alignment, gyroscope gravity sensitivity, temperature-indexed gyroscope biases, and noise values, then restart streaming. The driver publishes those coefficients with `parametersAppliedToSamples=false` and leaves each decoded SI sample untouched so the selected pose estimator can reproduce official ownership. SI units and sensor-to-runtime axis mapping remain in the report decoder. A captured XBX A01 factory blob carries the complete schema but uses identity scale/alignment and zero skew/gravity-sensitivity values; those neutral values must not be assumed for A01 Plus or other units. XREAL Air / Air 2 / Air 2 Pro / Air 2 Ultra use the same 0x14/0x15 factory JSON and the same publish-only contract.
 
 RayNeo Air 3/4-family sessions query device information before streaming and honor
 its `magnet_valid` flag. Command replies use report type `0xc8` and echo the
 requested command at byte 8; command `0x3c` then supplies the 3×3 sensor
 correction and accelerometer offset used by the vendor runtime. The driver
-applies these parameters, converts angular velocity from degrees/s to rad/s,
-and exposes the applied matrix and offset through `onImuCalibration`. A valid
+publishes that matrix and offset through `onImuCalibration` with
+`parametersAppliedToSamples=false`, converts angular velocity from degrees/s to
+rad/s, and leaves the decoded SI samples otherwise untouched. A valid
 finite 12-float `0x3c` reply is required before the Air stream starts; a
 timeout or explicit `0xff` response fails the open with no raw-data fallback. In the
 local Taurus 3.0 Pro firmware dated May 21 2025, `0x3c` is an identity matrix
 plus a zero offset. Its 48-byte response contains no magnetic calibration. The
 driver therefore
 collects magnetic extrema while the user rotates the glasses around all three
-axes, fits hard-iron bias plus a 3×3 soft-iron correction, publishes a second
-`MIXED` calibration event, and marks magnetic samples `HOST_ESTIMATED` only
-after that fit succeeds. Device ticks are 100 µs and are exported as
+axes, fits hard-iron bias plus a 3×3 soft-iron correction, and publishes a
+second `MIXED` calibration event. Those host magnetic coefficients are also
+left unapplied. Device ticks are 100 µs and are exported as
 nanoseconds without replacing the separate host receive timestamp.
 
 ## White-box native integration
@@ -202,9 +203,11 @@ unrelated glasses.
   counter are combined with the 24-bit IMU sample-age field. The final three bytes are not a
   standalone 32-bit timestamp.
 - Startup reads the V2 long-packet calibration commands `0x3302..0x3306`, validates their inner
-  CRC-16/CCITT, and applies gyro/accelerometer/magnetometer bias and 3x3 transforms, accelerometer
-  scale, optional `q_mag_imu`, and all three temperature-drift tables before publishing samples.
-- Factory-corrected magnetic samples are published directly. The device already supplies magnetic
+  CRC-16/CCITT, and publishes gyro/accelerometer/magnetometer bias and 3x3 transforms, accelerometer
+  scale, optional `q_mag_imu`, and the gyroscope temperature-drift table through `onImuCalibration`
+  with `parametersAppliedToSamples=false`. The report decoder converts acceleration from g to m/s²
+  and otherwise leaves the decoded SI samples untouched.
+- Factory magnetic coefficients are published rather than applied. The device already supplies magnetic
   bias, a 3x3 correction/alignment matrix, and an optional temperature table, so the driver does
   not stack a generic persisted host ellipsoid fit on top of those factory corrections.
 - `0x3140` queries Native/Bypass, `0x3142` queries 2D/3D, and `0x0142 [31|37]` selects 2D/3D.
@@ -272,10 +275,10 @@ unrelated glasses.
   command `0x3c`, and consumes its 12-float transform/acceleration-offset reply.
   It also sends `0x3e` for the complete -20°C..60°C, 81-point gyroscope
   bias table; replies are chunked into at most four XYZ float vectors per HID
-  packet. The GT driver requires both factory replies, applies the nearest
-  temperature bias before the shared sensor transform, and exposes all 81
-  converted rad/s points through `onImuCalibration`. Magnetometer hard/soft-iron
-  fitting remains host-side.
+  packet. The GT driver requires both factory replies and exposes all 81
+  converted rad/s points through `onImuCalibration` with
+  `parametersAppliedToSamples=false`. Magnetometer hard/soft-iron
+  fitting remains host-side and is also published rather than applied to samples.
 - RayNeo transport selection is descriptor-strict rather than "first IN/OUT":
   Taurus uses HID interface `0` with interrupt OUT/IN `0x01/0x81`; Gemini uses
   HID interface `5` with `0x04/0x85`. Gemini CDC interfaces `0/1` and runtime
