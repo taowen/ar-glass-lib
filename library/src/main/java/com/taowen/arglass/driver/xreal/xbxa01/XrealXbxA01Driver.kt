@@ -22,7 +22,12 @@ internal object XrealXbxA01Driver : GlassesDriver {
     override fun identify(device: UsbDevice): GlassesModel? = if (device.vendorId == 0x3318 && device.productId == profile.productId)
         GlassesModel(
             id, "XREAL", profile.marketName, 0x3318, profile.productId,
-            setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_MODE, GlassesCapability.DISPLAY_RESOLUTION),
+            setOf(
+                GlassesCapability.IMU,
+                GlassesCapability.DISPLAY_MODE,
+                GlassesCapability.DISPLAY_RESOLUTION,
+                GlassesCapability.CALIBRATED_TIMEWARP_MESH,
+            ),
             id,
             supportedDisplayProfiles = XrealXbxA01DisplayModeProtocol.profiles,
             preferred2dDisplayProfile = XrealXbxA01DisplayModeProtocol.profiles.firstOrNull {

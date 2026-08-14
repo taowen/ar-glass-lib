@@ -33,19 +33,6 @@ std::int16_t read_be_i16(std::span<const std::uint8_t> bytes, std::size_t offset
                        static_cast<std::uint16_t>(bytes[offset + 1]);
     return static_cast<std::int16_t>(value);
 }
-std::int32_t read_be_i32(std::span<const std::uint8_t> bytes, std::size_t offset) {
-    const auto value = static_cast<std::uint32_t>(bytes[offset]) << 24 |
-                       static_cast<std::uint32_t>(bytes[offset + 1]) << 16 |
-                       static_cast<std::uint32_t>(bytes[offset + 2]) << 8 |
-                       static_cast<std::uint32_t>(bytes[offset + 3]);
-    return static_cast<std::int32_t>(value);
-}
-std::int16_t read_xreal_v2_magnetic_i16(
-        std::span<const std::uint8_t> bytes, std::size_t offset) {
-    const auto value = static_cast<std::uint16_t>(bytes[offset]) |
-                       static_cast<std::uint16_t>(bytes[offset + 1] ^ 0x80U) << 8;
-    return static_cast<std::int16_t>(value);
-}
 }  // namespace
 
 std::vector<std::uint8_t> make_imu_command(std::uint8_t command, std::span<const std::uint8_t> payload) {
@@ -96,33 +83,28 @@ bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
         !scale3(v1 ? 30 : 33, v1 ? 2 : 3, read_le<std::uint16_t>(b, v1 ? 24 : 27),
                 read_le<std::int32_t>(b, v1 ? 26 : 29), accel)) return false;
     constexpr float radians = 0.01745329251994329577F;
-    out.angular_velocity_radps = {-gyro[0] * radians, gyro[2] * radians, gyro[1] * radians};
-    out.acceleration_mps2 = {-accel[0] * 9.81F, accel[2] * 9.81F, accel[1] * 9.81F};
-    if (v1) {
-        const auto mag_offset = read_le<std::int16_t>(b, 36);
-        const auto mag_divisor = read_le<std::int32_t>(b, 38);
-        if (mag_divisor != 0) {
-            for (std::size_t i = 0; i < 3; ++i) {
-                out.magnetic_field[i] =
-                        static_cast<float>(read_le<std::int16_t>(b, 42 + i * 2) - mag_offset) /
-                        mag_divisor;
+    // All three Camera-OV580 schemas use transform=1. The selected SDK 3.1
+    // decoder at RVA 0x187c87c maps gyro/accel as [-axis0,+axis1,+axis2]
+    // and uses the schema's literal gravity=9.8.
+    out.angular_velocity_radps = {-gyro[0] * radians, gyro[1] * radians, gyro[2] * radians};
+    out.acceleration_mps2 = {-accel[0] * 9.8F, accel[1] * 9.8F, accel[2] * 9.8F};
+
+    const std::size_t mag_offset_field = v1 ? 36 : 42;
+    const std::size_t mag_denominator_field = v1 ? 38 : 44;
+    const std::size_t mag_values = v1 ? 42 : 48;
+    const std::size_t mag_fresh = v1 ? 56 : 62;
+    if (b[mag_fresh] != 0) {
+        const auto offset = read_le<std::uint16_t>(b, mag_offset_field);
+        const auto denominator = read_le<std::uint32_t>(b, mag_denominator_field);
+        if (denominator != 0) {
+            std::array<float, 3> scaled{};
+            for (std::size_t i = 0; i < scaled.size(); ++i) {
+                const auto raw = read_le<std::uint16_t>(b, mag_values + i * 2);
+                scaled[i] = 100.F * (static_cast<float>(raw) - offset) / denominator;
             }
-        }
-    } else if (b[62] != 0) {
-        // Version 2 uses a different magnetic encoding from gyro/accel: the
-        // multiplier and divisor are big-endian, and each sample stores its
-        // sign bit XOR 0x80 in the high byte. Byte 62 is the freshness flag;
-        // the three magnetic words remain populated between 100 Hz samples,
-        // but forwarding those stale words as new measurements would make the
-        // fusion filter update them at the roughly 1 kHz report rate.
-        const auto mag_multiplier = read_be_i16(b, 42);
-        const auto mag_divisor = read_be_i32(b, 44);
-        if (mag_divisor != 0) {
-            for (std::size_t i = 0; i < 3; ++i) {
-                out.magnetic_field[i] =
-                        static_cast<float>(read_xreal_v2_magnetic_i16(b, 48 + i * 2)) *
-                        mag_multiplier / mag_divisor;
-            }
+            // transform=1 uses a different physical-axis order for the
+            // magnetometer carrier than for gyro/accel.
+            out.magnetic_field = {scaled[1], scaled[2], scaled[0]};
         }
     }
     out.temperature_celsius = read_le<std::int16_t>(b, 2) * (v1 ? 0.4831F : 0.007548309F) + 25.F;

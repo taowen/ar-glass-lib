@@ -102,17 +102,17 @@ internal class XrealXbxSession(
             executor.execute { listener.onImuCalibration(requireNotNull(imuCalibration).publicData()) }
             check(usb.imu(0x1a).isNotEmpty()) { "IMU sync failed" }
             check(usb.imu(0x19, byteArrayOf(1)).isNotEmpty()) { "IMU start failed" }
+            check(usb.startImuStream()) { "IMU native stream failed" }
             status("${model.displayName} IMU 已启动")
             while (running.get()) {
-                usb.readImu()?.takeIf { it.size == 64 }?.let { report ->
-                    // Match the selected NR 3.1 receiver: capture Android's
-                    // CLOCK_MONOTONIC at the USB boundary, before report
-                    // decoding adds latency.
-                    // System.nanoTime() is the Java boundary for that clock;
-                    // elapsedRealtimeNanos() uses CLOCK_BOOTTIME and diverges
-                    // by accumulated suspend time on long-running phones.
-                    val hostArrivalTimeNanos = System.nanoTime()
-                    decodeXrealImuReport(report)?.copy(
+                usb.readImuRecord()?.takeIf { it.size == 72 }?.let { record ->
+                    // The native reader timestamps immediately after USBFS
+                    // returns, then submits the next read before Java decoding
+                    // and listener work. This preserves the official receiver's
+                    // approximately 1 ms XBX report cadence.
+                    val hostArrivalTimeNanos = ByteBuffer.wrap(record, 0, 8)
+                        .order(ByteOrder.LITTLE_ENDIAN).long
+                    decodeXrealImuReport(record.copyOfRange(8, 72))?.copy(
                         hostTimestampNanos = hostArrivalTimeNanos,
                     )
                 }?.let { sample -> executor.execute { listener.onImuSample(sample) } }

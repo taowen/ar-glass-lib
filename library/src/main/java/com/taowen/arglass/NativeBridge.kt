@@ -23,6 +23,8 @@ internal object NativeBridge {
     external fun xrealMcuSetDisplayModeValue(handle: Long, modeValue: Int, payloadBytes: Int): Boolean
     external fun xrealImuCommand(handle: Long, command: Int, payload: ByteArray): ByteArray
     external fun xrealReadImu(handle: Long, timeoutMs: Int): ByteArray?
+    external fun xrealStartImuStream(handle: Long): Boolean
+    external fun xrealReadImuRecord(handle: Long, timeoutMs: Int): ByteArray?
     external fun closeXrealUsbSession(handle: Long)
     external fun createGoovisUsbSession(
         fileDescriptor: Int,

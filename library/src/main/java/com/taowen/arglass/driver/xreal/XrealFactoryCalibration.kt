@@ -201,14 +201,15 @@ internal class XrealFactoryCalibration private constructor(
         private fun subtract(value: FloatArray, bias: FloatArray): FloatArray =
             FloatArray(3) { value[it] - bias[it] }
 
-        private fun sensorToRuntime(value: FloatArray): FloatArray = floatArrayOf(-value[0], value[2], value[1])
+        private fun sensorToRuntime(value: FloatArray): FloatArray =
+            floatArrayOf(-value[0], value[1], value[2])
 
-        /** S * M * S^-1 for S(x,y,z)=(-x,z,y). */
+        /** S * M * S^-1 for the SDK schema's transform=1, S(x,y,z)=(-x,y,z). */
         private fun sensorMatrixToRuntime(matrix: FloatArray): FloatArray {
             val basis = arrayOf(
                 floatArrayOf(-1f, 0f, 0f),
-                floatArrayOf(0f, 0f, 1f),
                 floatArrayOf(0f, 1f, 0f),
+                floatArrayOf(0f, 0f, 1f),
             )
             return FloatArray(9) { index ->
                 val row = index / 3

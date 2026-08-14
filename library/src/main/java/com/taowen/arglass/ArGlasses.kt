@@ -3,7 +3,14 @@ package com.taowen.arglass
 import android.hardware.usb.UsbDevice
 import com.taowen.arglass.driver.GlassesDriverRegistry
 
-enum class GlassesCapability { IMU, DISPLAY_MODE, DISPLAY_RESOLUTION, CAMERA }
+enum class GlassesCapability {
+    IMU,
+    DISPLAY_MODE,
+    DISPLAY_RESOLUTION,
+    CAMERA,
+    /** A reviewed device-calibrated ray mesh is available to a timewarp renderer. */
+    CALIBRATED_TIMEWARP_MESH,
+}
 
 enum class GlassesDisplayLayout { MONO_2D, HALF_SBS_3D, FULL_SBS_3D }
 
@@ -141,6 +148,12 @@ data class GlassesModel(
     }
 }
 
+/**
+ * One decoded sensor sample in the shared right-handed glasses runtime frame:
+ * +X points right, +Y points up, and +Z points backward toward the wearer.
+ * Drivers must rotate device/package coordinates into this frame. [rawReport]
+ * remains byte-for-byte transport data when callers need vendor-native axes.
+ */
 data class ImuSample(
     val deviceTimestampNanos: Long,
     val accelerationMetersPerSecondSquared: FloatArray,

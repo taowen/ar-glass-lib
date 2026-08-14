@@ -27,24 +27,32 @@ internal class VitureV2Calibration private constructor(
     fun publicData(): ImuCalibrationData {
         // decodeImu already converts report g units with STANDARD_GRAVITY.
         // Keep the remaining factory scale as a correction on those SI samples.
-        val accelerationCorrection = scale(accelerometerMatrix, accelerometerScale / STANDARD_GRAVITY)
-        val factoryMagneticBias = transform(magnetometerMatrix, magnetometerBias)
+        val accelerationCorrection = rotateMatrixToRuntime(
+            scale(accelerometerMatrix, accelerometerScale / STANDARD_GRAVITY),
+        )
+        val factoryMagneticBias = rotateVectorToRuntime(
+            transform(magnetometerMatrix, magnetometerBias),
+        )
         return ImuCalibrationData(
             source = ImuCalibrationSource.DEVICE_FACTORY,
             state = FACTORY_STATE,
-            accelerometerBiasMetersPerSecondSquared = transform(
-                scale(accelerometerMatrix, accelerometerScale),
-                accelerometerBias,
+            accelerometerBiasMetersPerSecondSquared = rotateVectorToRuntime(
+                transform(scale(accelerometerMatrix, accelerometerScale), accelerometerBias),
             ),
-            gyroscopeBiasRadiansPerSecond = transform(gyroscopeMatrix, gyroscopeBias),
+            gyroscopeBiasRadiansPerSecond = rotateVectorToRuntime(
+                transform(gyroscopeMatrix, gyroscopeBias),
+            ),
             magnetometerBias = factoryMagneticBias,
             gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
-                TemperatureGyroscopeBias(it.temperatureCelsius, transform(gyroscopeMatrix, it.bias))
+                TemperatureGyroscopeBias(
+                    it.temperatureCelsius,
+                    rotateVectorToRuntime(transform(gyroscopeMatrix, it.bias)),
+                )
             },
             noiseStandardDeviations = noiseStandardDeviations.copyOf(),
             accelerometerCorrectionMatrix = accelerationCorrection.copyOf(),
-            gyroscopeCorrectionMatrix = gyroscopeMatrix.copyOf(),
-            magnetometerCorrectionMatrix = magnetometerMatrix.copyOf(),
+            gyroscopeCorrectionMatrix = rotateMatrixToRuntime(gyroscopeMatrix),
+            magnetometerCorrectionMatrix = rotateMatrixToRuntime(magnetometerMatrix),
             parametersAppliedToSamples = false,
             rawPayloads = rawPayloads.map { it.copy(bytes = it.bytes.copyOf()) },
         )
@@ -169,11 +177,20 @@ internal class VitureV2Calibration private constructor(
 
         private fun scale(matrix: FloatArray, value: Float) = FloatArray(9) { matrix[it] * value }
 
+        private fun rotateVectorToRuntime(value: FloatArray) =
+            floatArrayOf(value[0], -value[1], -value[2])
+
+        /** R * matrix * R^-1, where R is Beast package -> runtime coordinates. */
+        private fun rotateMatrixToRuntime(matrix: FloatArray): FloatArray =
+            multiply(RUNTIME_FROM_IMU_PACKAGE, multiply(matrix, RUNTIME_FROM_IMU_PACKAGE))
+
         private const val IMU_PACKET_SIZE = 124
         private const val MAGNETOMETER_PACKET_SIZE = 56
         private const val TEMPERATURE_HEADER_SIZE = 12
         private const val TEMPERATURE_GROUP_SIZE = 16
         private const val STANDARD_GRAVITY = 9.80665f
         private val IDENTITY_MATRIX = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+        private val RUNTIME_FROM_IMU_PACKAGE =
+            floatArrayOf(1f, 0f, 0f, 0f, -1f, 0f, 0f, 0f, -1f)
     }
 }

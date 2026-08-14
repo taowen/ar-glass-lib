@@ -6,14 +6,19 @@
 #include <android/log.h>
 #include <libusb.h>
 #include <linux/usbdevice_fs.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 
 #include <atomic>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <mutex>
+#include <thread>
 
 namespace {
 std::vector<std::uint8_t> to_vector(JNIEnv* env, jbyteArray input) {
@@ -59,8 +64,28 @@ public:
     std::vector<std::uint8_t> read_imu(JNIEnv*, int timeout) {
         return read(imu_in_, 64, timeout);
     }
+    bool start_imu_stream() {
+        if (!imu_in_ || !running_ || imu_streaming_.exchange(true)) return false;
+        imu_reader_ = std::thread([this] { read_imu_stream(); });
+        return true;
+    }
+    std::vector<std::uint8_t> read_imu_record(int timeout) {
+        std::unique_lock lock(imu_queue_mutex_);
+        imu_queue_ready_.wait_for(lock, std::chrono::milliseconds(std::max(timeout, 0)), [this] {
+            return !imu_queue_.empty() || !imu_streaming_ || !running_;
+        });
+        if (imu_queue_.empty()) return {};
+        auto result = std::move(imu_queue_.front());
+        imu_queue_.pop_front();
+        return result;
+    }
     void close(JNIEnv*) {
         if (!running_.exchange(false)) return;
+        imu_streaming_.store(false);
+        imu_queue_ready_.notify_all();
+        for (auto& slot : imu_urbs_)
+            ioctl(fd_, USBDEVFS_DISCARDURB, &slot.urb);
+        if (imu_reader_.joinable()) imu_reader_.join();
         if (imu_interface_ >= 0) libusb_release_interface(handle_, imu_interface_);
         if (mcu_interface_ >= 0) libusb_release_interface(handle_, mcu_interface_);
         if (handle_) libusb_close(handle_);
@@ -73,6 +98,79 @@ public:
     }
 
 private:
+    struct ImuUrb {
+        std::array<std::uint8_t, 64> bytes{};
+        // usbdevfs_urb ends in a zero-length ISO descriptor array, so Clang
+        // requires it to remain the final member even for a bulk URB.
+        usbdevfs_urb urb{};
+    };
+    static std::int64_t monotonic_time_nanos() {
+        timespec time{};
+        clock_gettime(CLOCK_MONOTONIC, &time);
+        return static_cast<std::int64_t>(time.tv_sec) * 1'000'000'000LL + time.tv_nsec;
+    }
+    void read_imu_stream() {
+        const auto submit = [this](ImuUrb& slot) {
+            slot.urb = {};
+            slot.urb.type = USBDEVFS_URB_TYPE_BULK;
+            slot.urb.endpoint = static_cast<unsigned char>(imu_in_);
+            slot.urb.buffer = slot.bytes.data();
+            slot.urb.buffer_length = slot.bytes.size();
+            slot.urb.usercontext = &slot;
+            return ioctl(fd_, USBDEVFS_SUBMITURB, &slot.urb) == 0;
+        };
+
+        int active = 0;
+        for (auto& slot : imu_urbs_) active += submit(slot) ? 1 : 0;
+        if (active == 0) {
+            __android_log_print(ANDROID_LOG_ERROR, "ArGlassNative",
+                "Cannot submit XREAL asynchronous IMU URBs errno=%d (%s)",
+                errno, std::strerror(errno));
+        }
+        while (active > 0) {
+            pollfd descriptor{.fd = fd_, .events = POLLOUT, .revents = 0};
+            const int poll_result = poll(&descriptor, 1, 100);
+            if (poll_result < 0 && errno != EINTR) break;
+            if (poll_result == 0) {
+                if (!running_ || !imu_streaming_) {
+                    for (auto& slot : imu_urbs_)
+                        ioctl(fd_, USBDEVFS_DISCARDURB, &slot.urb);
+                }
+                continue;
+            }
+            while (true) {
+                usbdevfs_urb* completed = nullptr;
+                if (ioctl(fd_, USBDEVFS_REAPURBNDELAY, &completed) != 0) {
+                    if (errno != EAGAIN && errno != EINTR) active = 0;
+                    break;
+                }
+                --active;
+                auto* slot = static_cast<ImuUrb*>(completed->usercontext);
+                if (completed->status == 0
+                        && completed->actual_length == static_cast<int>(slot->bytes.size())) {
+                    const auto arrival = monotonic_time_nanos();
+                    ar_glass::record_usb_transfer(
+                            vid_, pid_, 1, imu_in_, 0, 0, 0,
+                            completed->actual_length, slot->bytes.data(), slot->bytes.size());
+                    std::vector<std::uint8_t> record(8 + slot->bytes.size());
+                    for (int byte = 0; byte < 8; ++byte)
+                        record[byte] = static_cast<std::uint8_t>(arrival >> (byte * 8));
+                    std::copy(slot->bytes.begin(), slot->bytes.end(), record.begin() + 8);
+                    {
+                        std::lock_guard lock(imu_queue_mutex_);
+                        // At 1 kHz this is 256 ms of headroom. Never stop
+                        // queueing USB requests because Java is temporarily slow.
+                        if (imu_queue_.size() == 256) imu_queue_.pop_front();
+                        imu_queue_.push_back(std::move(record));
+                    }
+                    imu_queue_ready_.notify_one();
+                }
+                if (running_ && imu_streaming_ && submit(*slot)) ++active;
+            }
+        }
+        imu_streaming_.store(false);
+        imu_queue_ready_.notify_all();
+    }
     int transfer(int endpoint, std::uint8_t* bytes, int size, int timeout) {
         usbdevfs_bulktransfer request{};
         request.ep = static_cast<unsigned int>(endpoint);
@@ -125,6 +223,12 @@ private:
     int mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
     std::mutex command_mutex_;
     std::atomic_bool running_{true};
+    std::atomic_bool imu_streaming_{false};
+    std::thread imu_reader_;
+    std::mutex imu_queue_mutex_;
+    std::condition_variable imu_queue_ready_;
+    std::deque<std::vector<std::uint8_t>> imu_queue_;
+    std::array<ImuUrb, 8> imu_urbs_{};
     std::atomic_uint32_t next_mcu_request_id_{1};
 };
 
@@ -268,6 +372,15 @@ Java_com_taowen_arglass_NativeBridge_xrealImuCommand(JNIEnv* env, jobject, jlong
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_taowen_arglass_NativeBridge_xrealReadImu(JNIEnv* env, jobject, jlong handle, jint timeout) {
     const auto bytes = session(handle)->read_imu(env, timeout);
+    return bytes.empty() ? nullptr : to_array(env, bytes);
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_taowen_arglass_NativeBridge_xrealStartImuStream(JNIEnv*, jobject, jlong handle) {
+    return session(handle)->start_imu_stream();
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_taowen_arglass_NativeBridge_xrealReadImuRecord(JNIEnv* env, jobject, jlong handle, jint timeout) {
+    const auto bytes = session(handle)->read_imu_record(timeout);
     return bytes.empty() ? nullptr : to_array(env, bytes);
 }
 extern "C" JNIEXPORT void JNICALL

@@ -46,6 +46,13 @@ internal class XrealNativeUsbSession(
 
     fun readImu(timeoutMs: Int = 750): ByteArray? = NativeBridge.xrealReadImu(handle, timeoutMs)
 
+    /** Starts the post-bootstrap native reader. Commands must be complete first. */
+    fun startImuStream(): Boolean = NativeBridge.xrealStartImuStream(handle)
+
+    /** Little-endian CLOCK_MONOTONIC ns followed by one 64-byte wire report. */
+    fun readImuRecord(timeoutMs: Int = 750): ByteArray? =
+        NativeBridge.xrealReadImuRecord(handle, timeoutMs)
+
     override fun close() {
         if (closed.compareAndSet(false, true)) NativeBridge.closeXrealUsbSession(handle)
     }

@@ -66,15 +66,17 @@ internal object VitureBeastProtocol {
         val gyro = vector(10)
         val magnet = vector(34)
         if ((accelerationG + gyro + magnet).any { !it.isFinite() }) return null
-        val acceleration = FloatArray(3) { accelerationG[it] * STANDARD_GRAVITY }
+        val acceleration = imuPackageToRuntime(
+            FloatArray(3) { accelerationG[it] * STANDARD_GRAVITY },
+        )
         val baseMilliseconds = buffer.getInt(4).toLong() and 0xffffffffL
         val sampleCounterMicroseconds = buffer.getInt(0).toLong() and 0xffffffffL
         val imuAgeMicroseconds = uint24(buffer, 46).toLong()
         return ImuSample(
             baseMilliseconds * 1_000_000L + (sampleCounterMicroseconds - imuAgeMicroseconds) * 1_000L,
             acceleration,
-            gyro,
-            magnet,
+            imuPackageToRuntime(gyro),
+            imuPackageToRuntime(magnet),
             (buffer.getShort(8).toInt() and 0xffff) * 0.2f,
             2,
             hostTimestampNanos,
@@ -86,6 +88,10 @@ internal object VitureBeastProtocol {
         (buffer.get(offset).toInt() and 0xff) or
             ((buffer.get(offset + 1).toInt() and 0xff) shl 8) or
             ((buffer.get(offset + 2).toInt() and 0xff) shl 16)
+
+    /** Beast's IMU package is mounted 180 degrees about runtime +X. */
+    private fun imuPackageToRuntime(value: FloatArray) =
+        floatArrayOf(value[0], -value[1], -value[2])
 
     private const val V2_IMU_PAYLOAD_SIZE = 56
     private const val STANDARD_GRAVITY = 9.80665f

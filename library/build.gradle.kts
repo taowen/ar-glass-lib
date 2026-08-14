@@ -17,5 +17,3 @@ android {
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
 }
-
-dependencies { testImplementation("junit:junit:4.13.2") }
