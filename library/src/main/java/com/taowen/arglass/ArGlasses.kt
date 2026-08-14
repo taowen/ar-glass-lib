@@ -203,6 +203,8 @@ data class ImuTransportMetadata(
     val magnetometerNumerator: Float? = null,
     val outputNumeratorMask: Int? = null,
     val groupDelay: Float? = null,
+    /** Device-time VSync associated with this sample, when transported separately from IMU time. */
+    val vsyncTimestampNanos: Long? = null,
 )
 
 object ArGlassesCatalog {

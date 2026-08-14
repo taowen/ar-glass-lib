@@ -9,6 +9,9 @@ import java.util.concurrent.Executor
 
 internal object VitureGen2Driver:GlassesDriver {
     override val id="viture_gen2"
+    // SDK 2.4.0 maps all of these product IDs to Gen2 and the shared V2 parser. Its public
+    // raw-layout table does not name Luma Cyber (0x1151) separately, so its nine-axis aperture
+    // still needs a live-device comparison even though the SDK product table accepts the model.
     private val models=mapOf(
         0x1131 to "Luma",
         0x1121 to "Luma Pro",

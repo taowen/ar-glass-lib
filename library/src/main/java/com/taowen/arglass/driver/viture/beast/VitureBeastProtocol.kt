@@ -3,6 +3,7 @@ package com.taowen.arglass.driver.viture.beast
 import com.taowen.arglass.GlassesDisplayLayout
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.ImuSample
+import com.taowen.arglass.ImuTransportMetadata
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -72,14 +73,20 @@ internal object VitureBeastProtocol {
         val baseMilliseconds = buffer.getInt(4).toLong() and 0xffffffffL
         val sampleCounterMicroseconds = buffer.getInt(0).toLong() and 0xffffffffL
         val imuAgeMicroseconds = uint24(buffer, 46).toLong()
+        val vsyncAgeMicroseconds = uint24(buffer, 52).toLong()
+        val baseTimestampNanos = baseMilliseconds * 1_000_000L
         return ImuSample(
-            baseMilliseconds * 1_000_000L + (sampleCounterMicroseconds - imuAgeMicroseconds) * 1_000L,
+            baseTimestampNanos + (sampleCounterMicroseconds - imuAgeMicroseconds) * 1_000L,
             acceleration,
             imuPackageToRuntime(gyro),
             imuPackageToRuntime(magnet),
             (buffer.getShort(8).toInt() and 0xffff) * 0.2f,
             2,
             hostTimestampNanos,
+            transportMetadata = ImuTransportMetadata(
+                vsyncTimestampNanos =
+                    baseTimestampNanos + (sampleCounterMicroseconds - vsyncAgeMicroseconds) * 1_000L,
+            ),
             rawReport = bytes.copyOf(length),
         )
     }
@@ -89,7 +96,12 @@ internal object VitureBeastProtocol {
             ((buffer.get(offset + 1).toInt() and 0xff) shl 8) or
             ((buffer.get(offset + 2).toInt() and 0xff) shl 16)
 
-    /** Beast's IMU package is mounted 180 degrees about runtime +X. */
+    /**
+     * Beast's IMU package -> glasses transform was verified from live motion as 180 degrees
+     * about runtime +X. Luma, Luma Pro/Cyber, and Pro 2 use the same official V2 parser, but
+     * the available SDK and firmware do not prove their physical IMU mounting. They currently
+     * retain this transform for compatibility until each model can be checked on hardware.
+     */
     private fun imuPackageToRuntime(value: FloatArray) =
         floatArrayOf(value[0], -value[1], -value[2])
 

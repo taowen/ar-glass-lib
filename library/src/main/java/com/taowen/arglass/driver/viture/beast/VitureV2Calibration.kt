@@ -106,10 +106,10 @@ internal class VitureV2Calibration private constructor(
                     imu.getFloat(120),
                 ).filter(Float::isFinite).toFloatArray(),
                 rawPayloads = buildList {
-                    add(ImuRawCalibrationPayload("viture.v2-packet", 0x3302, imuPacket.copyOf()))
-                    add(ImuRawCalibrationPayload("viture.v2-packet", 0x3303, magnetometerPacket.copyOf()))
+                    add(ImuRawCalibrationPayload("viture.v2-packet", 0x3303, imuPacket.copyOf()))
+                    add(ImuRawCalibrationPayload("viture.v2-packet", 0x3304, magnetometerPacket.copyOf()))
                     gyroscopeTemperaturePacket?.let {
-                        add(ImuRawCalibrationPayload("viture.v2-packet", 0x3304, it.copyOf()))
+                        add(ImuRawCalibrationPayload("viture.v2-packet", 0x3302, it.copyOf()))
                     }
                     accelerometerTemperaturePacket?.let {
                         add(ImuRawCalibrationPayload("viture.v2-packet", 0x3305, it.copyOf()))
@@ -148,7 +148,12 @@ internal class VitureV2Calibration private constructor(
 
         private fun vector4(buffer: ByteBuffer, offset: Int) = FloatArray(4) { buffer.getFloat(offset + it * 4) }
 
-        /** Firmware/SDK matrices are serialized column-major; the public driver contract is row-major. */
+        /**
+         * Firmware/SDK matrices are serialized column-major; the public driver contract is row-major.
+         * Field offsets and serialization are statically confirmed. Applying q_mag_imu on the left is
+         * consistent with its SDK name (mag -> IMU), but has not been dynamically cross-checked with a
+         * non-identity factory packet from every supported V2 model.
+         */
         private fun matrix(buffer: ByteBuffer, offset: Int): FloatArray {
             val columnMajor = FloatArray(9) { buffer.getFloat(offset + it * 4) }
             return FloatArray(9) { index -> columnMajor[(index % 3) * 3 + index / 3] }

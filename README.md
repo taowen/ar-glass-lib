@@ -164,6 +164,8 @@ optional extended transport metadata, and optional exact `rawReport`. The device
 timestamp remains the original glasses clock and is not replaced by Android
 receive time; `hostTimestampNanos` is captured immediately after the transport
 read so latency-sensitive consumers do not have to timestamp a delayed callback.
+When a transport carries a hardware VSync time separately, it is exposed as
+`transportMetadata.vsyncTimestampNanos` rather than conflated with either clock.
 Transport decoding covers units and the runtime axis convention only.
 `sample.calibration` states which corrections are already present in that sample.
 `onImuCalibration` publishes factory or host coefficients plus zero or more
@@ -218,14 +220,16 @@ unrelated glasses.
 - USB controller identities: VID `0x35CA`, PID `0x1201` or `0x1211`.
 - Gen2 V2 packets use a `10 00` header, little-endian message ID and payload length, and a 16-bit payload checksum.
 - RAW IMU starts with message `0x0301` and payload `02 02` (120 Hz); reports use message `0x7309`.
-- The V2 report carries a 64-bit reconstructed IMU timestamp: its millisecond base and microsecond
-  counter are combined with the 24-bit IMU sample-age field. The final three bytes are not a
-  standalone 32-bit timestamp.
-- Startup reads the V2 long-packet calibration commands `0x3302..0x3306`, validates their inner
+- The V2 report carries reconstructed IMU and hardware-VSync timestamps: its millisecond base and
+  microsecond counter are combined separately with the 24-bit IMU age at payload offset 46 and
+  24-bit VSync age at offset 52. The latter is published as `transportMetadata.vsyncTimestampNanos`.
+- Startup reads the V2 long-packet calibration commands `0x3302` gyro temperature, `0x3303` IMU,
+  `0x3304` magnetometer, `0x3305` accelerometer temperature, and `0x3306` magnetometer temperature;
+  it validates their inner
   CRC-16/CCITT, and publishes gyro/accelerometer/magnetometer bias and 3x3 transforms, accelerometer
   scale, optional `q_mag_imu`, and the gyroscope temperature-drift table through `onImuCalibration`
   with `parametersAppliedToSamples=false`. The report decoder converts acceleration from g to m/s²
-  and otherwise leaves the decoded SI samples untouched.
+  and rotates package vectors into the common glasses runtime frame.
 - Factory magnetic coefficients are published rather than applied. The device already supplies magnetic
   bias, a 3x3 correction/alignment matrix, and an optional temperature table, so the driver does
   not stack a generic persisted host ellipsoid fit on top of those factory corrections.
@@ -242,7 +246,11 @@ unrelated glasses.
   before exposing additional product IDs.
 - Luma `1131`, Luma Pro `1121/1141`, Luma Cyber `1151`, and Pro 2 `1301` expose
   the open Gen2 `0301 [02 02]` RAW IMU stream with `7309` reports. They share
-  the calibrated nine-axis V2 driver used by Beast.
+  the calibrated nine-axis V2 driver used by Beast. Their common V2 wire layout is confirmed, but
+  their physical IMU mounting relative to the frame has not been checked model by model; the driver
+  currently retains the Beast package-to-runtime transform for compatibility. SDK 2.4.0 accepts
+  Luma Cyber as Gen2 but omits that name from its public raw-layout table, so its nine-axis aperture
+  also remains pending a live-device comparison.
 - XRLinuxDriver performs their 2D/3D switching through VITURE's proprietary
   `libglasses.so`. The Android SDK license prohibits unauthorized copying,
   distribution, and use, so ar-glass-lib neither bundles it nor falsely exposes
