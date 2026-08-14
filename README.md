@@ -158,7 +158,7 @@ if (profile != null) session.setDisplayProfile(profile)
 ```
 
 `ArGlassesListener.onImuSample` receives the same interface for every model:
-acceleration in m/s², angular velocity in rad/s, an optional magnetic vector,
+acceleration in m/s², angular velocity in rad/s, an optional magnetic vector in µT,
 temperature, device timestamp, host receive timestamp, calibration state,
 optional extended transport metadata, and optional exact `rawReport`. The device
 timestamp remains the original glasses clock and is not replaced by Android
@@ -174,7 +174,7 @@ coefficients. Consumers must not apply an already-applied set a second time.
 Extended carriers can expose their timing/scaling fields through
 `transportMetadata`.
 
-XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer/gyroscope/magnetometer biases, per-sensor scale/skew matrices, `accel_q_gyro`/`gyro_q_mag` alignment, gyroscope gravity sensitivity, temperature-indexed gyroscope biases, and noise values, then restart streaming. The driver publishes those coefficients with `parametersAppliedToSamples=false` and leaves each decoded SI sample untouched so the selected pose estimator can reproduce official ownership. SI units and sensor-to-runtime axis mapping remain in the report decoder. A captured XBX A01 factory blob carries the complete schema but uses identity scale/alignment and zero skew/gravity-sensitivity values; those neutral values must not be assumed for A01 Plus or other units. XREAL Air / Air 2 / Air 2 Pro / Air 2 Ultra use the same 0x14/0x15 factory JSON and the same publish-only contract.
+XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer/gyroscope/magnetometer biases, per-sensor scale/skew matrices, `accel_q_gyro`/`gyro_q_mag` alignment, gyroscope gravity sensitivity, temperature-indexed gyroscope biases, and noise values, then restart streaming. The driver publishes those coefficients with `parametersAppliedToSamples=false` and leaves each decoded SI sample untouched so the selected pose estimator can reproduce official ownership. SI units and sensor-to-runtime axis mapping remain in the report decoder: XBX v2 `transform=1` publishes gyroscope/accelerometer as `[-source0,+source2,+source1]` and magnetic field as `[source1,source2,source0]`. Factory vectors and matrices remain in JSON component order; applying the report permutation to them again would double-transform the calibration. A captured XBX A01 factory blob carries the complete schema but uses identity scale/alignment and zero skew/gravity-sensitivity values; those neutral values must not be assumed for A01 Plus or other units. XREAL Air / Air 2 / Air 2 Pro / Air 2 Ultra use the same 0x14/0x15 factory JSON and the same publish-only contract.
 
 RayNeo Air 3/4-family sessions query device information before streaming and honor
 its `magnet_valid` flag. Command replies use report type `0xc8` and echo the
@@ -411,10 +411,16 @@ mode mapping instead of forcing one fixed preferred mode: 60 Hz 2D maps to
   capture returned the scalar state `9`, matching the official `nativeGetMagneticState(): Int`
   API rather than an additional calibration blob. The driver therefore does not query it as
   calibration data or send the corresponding setter.
-- Version-2 reports decode gyro/accelerometer from little-endian signed fields,
-  while magnetometer multiplier/divisor are big-endian and magnetic samples use
-  XREAL's high-byte sign-bit transform. Invalid magnetic divisors are exposed as
-  `ImuSample.magneticField == null` instead of a misleading zero vector.
+- Version-2 reports decode gyro/accelerometer from little-endian signed fields.
+  The magnetometer offset, denominator, and three unsigned samples are also
+  little-endian; SDK 3.1 then emits source axes `[1, 2, 0]` using
+  `100 * (raw - offset) / denominator`. The decoded magnetic vector is always
+  exposed, including the protocol's cached value on reports without a new
+  observation. `ImuSample.transportMetadata.magneticFieldFresh` distinguishes a
+  fresh observation from that cache; fusion must not resubmit cached values.
+  Like SDK 3.1, a zero divisor is allowed to produce IEEE Inf/NaN and is left for
+  the typed-sample validity/range gate instead of causing the transport report to
+  be dropped or silently replaced with zero/null.
 
 - Display query/switch uses the same MCU `0x07` / `0x08` commands after completing the Helen bootstrap.
 - Helen does not use the generic display-mode wire values. XBX/Helen currently

@@ -63,51 +63,67 @@ std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::uint32_t 
 }
 
 bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
-    if (b.size() != 64 || b[0] != 1 || (b[1] != 1 && b[1] != 2)) return false;
+    if (b.size() < 64 || b[0] != 1 || (b[1] != 1 && b[1] != 2)) return false;
     out = {};
     out.magnetic_field.fill(std::numeric_limits<float>::quiet_NaN());
     out.report_version = b[1];
     out.timestamp_nanos = read_le<std::int64_t>(b, 4);
     const auto scale3 = [&](std::size_t offset, std::size_t stride, std::uint16_t numerator,
-                            std::int32_t divisor, std::array<float, 3>& values) {
-        if (divisor == 0) return false;
+                            std::uint32_t denominator, std::array<double, 3>& values) {
         for (std::size_t i = 0; i < 3; ++i) {
             const auto raw = stride == 2 ? read_le<std::int16_t>(b, offset + i * stride) : read_i24(b, offset + i * stride);
-            values[i] = static_cast<float>(raw) * numerator / divisor;
+            // SDK 3.1 RVA 0x187d43c..0x187d6a0 performs the physical
+            // conversion in double precision and does not special-case a
+            // zero denominator. Preserve IEEE Inf/NaN for the typed validity
+            // gate instead of dropping the complete transport report here.
+            values[i] = static_cast<double>(raw) * static_cast<double>(numerator) /
+                        static_cast<double>(denominator);
         }
-        return true;
     };
-    std::array<float, 3> gyro{}, accel{};
+    std::array<double, 3> gyro{}, accel{};
     const bool v1 = b[1] == 1;
-    if (!scale3(18, v1 ? 2 : 3, read_le<std::uint16_t>(b, 12), read_le<std::int32_t>(b, 14), gyro) ||
-        !scale3(v1 ? 30 : 33, v1 ? 2 : 3, read_le<std::uint16_t>(b, v1 ? 24 : 27),
-                read_le<std::int32_t>(b, v1 ? 26 : 29), accel)) return false;
-    constexpr float radians = 0.01745329251994329577F;
+    scale3(18, v1 ? 2 : 3, read_le<std::uint16_t>(b, 12),
+           read_le<std::uint32_t>(b, 14), gyro);
+    scale3(v1 ? 30 : 33, v1 ? 2 : 3,
+           read_le<std::uint16_t>(b, v1 ? 24 : 27),
+           read_le<std::uint32_t>(b, v1 ? 26 : 29), accel);
+    constexpr double radians = 0.017453292519943295;
     // All three Camera-OV580 schemas use transform=1. The selected SDK 3.1
-    // decoder at RVA 0x187c87c maps gyro/accel as [-axis0,+axis1,+axis2]
-    // and uses the schema's literal gravity=9.8.
-    out.angular_velocity_radps = {-gyro[0] * radians, gyro[1] * radians, gyro[2] * radians};
-    out.acceleration_mps2 = {-accel[0] * 9.8F, accel[1] * 9.8F, accel[2] * 9.8F};
+    // route was rechecked at RVA 0x187c87c and dynamically at the typed
+    // carrier/0x1f7df78 boundary: gyro/accel source axes are [0,2,1], with
+    // only source axis 0 negated. The earlier [0,1,2] transcription was a
+    // decoder-layout error hidden by comparing two copies of the same code.
+    // The schema's literal gravity is 9.8.
+    out.angular_velocity_radps = {
+        static_cast<float>(-gyro[0] * radians),
+        static_cast<float>(gyro[2] * radians),
+        static_cast<float>(gyro[1] * radians),
+    };
+    out.acceleration_mps2 = {
+        static_cast<float>(-accel[0] * 9.8),
+        static_cast<float>(accel[2] * 9.8),
+        static_cast<float>(accel[1] * 9.8),
+    };
 
     const std::size_t mag_offset_field = v1 ? 36 : 42;
     const std::size_t mag_denominator_field = v1 ? 38 : 44;
     const std::size_t mag_values = v1 ? 42 : 48;
-    const std::size_t mag_fresh = v1 ? 56 : 62;
-    if (b[mag_fresh] != 0) {
-        const auto offset = read_le<std::uint16_t>(b, mag_offset_field);
-        const auto denominator = read_le<std::uint32_t>(b, mag_denominator_field);
-        if (denominator != 0) {
-            std::array<float, 3> scaled{};
-            for (std::size_t i = 0; i < scaled.size(); ++i) {
-                const auto raw = read_le<std::uint16_t>(b, mag_values + i * 2);
-                scaled[i] = 100.F * (static_cast<float>(raw) - offset) / denominator;
-            }
-            // transform=1 uses a different physical-axis order for the
-            // magnetometer carrier than for gyro/accel.
-            out.magnetic_field = {scaled[1], scaled[2], scaled[0]};
-        }
+    const auto offset = read_le<std::uint16_t>(b, mag_offset_field);
+    const auto denominator = read_le<std::uint32_t>(b, mag_denominator_field);
+    std::array<float, 3> scaled{};
+    for (std::size_t i = 0; i < scaled.size(); ++i) {
+        const auto raw = read_le<std::uint16_t>(b, mag_values + i * 2);
+        scaled[i] = static_cast<float>(
+            100.0 * (static_cast<double>(raw) - static_cast<double>(offset)) /
+            static_cast<double>(denominator));
     }
-    out.temperature_celsius = read_le<std::int16_t>(b, 2) * (v1 ? 0.4831F : 0.007548309F) + 25.F;
+    // The decoder always exposes the report's cached magnetic vector. Byte
+    // 56/62 says whether it is a new observation; callers receive that
+    // distinction separately through ImuTransportMetadata.
+    out.magnetic_field = {scaled[1], scaled[2], scaled[0]};
+    out.temperature_celsius = static_cast<float>(
+        static_cast<double>(read_le<std::int16_t>(b, 2)) *
+            (v1 ? 0.4831 : 0.007548309) + 25.0);
     return true;
 }
 

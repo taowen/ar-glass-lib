@@ -33,7 +33,7 @@ internal class XrealFactoryCalibration private constructor(
         state = calibrationState(hasMagnetometer, hostMagnetic != null),
         accelerometerBiasMetersPerSecondSquared = accelerationBias.copyOf(),
         gyroscopeBiasRadiansPerSecond = gyroscopeBias.copyOf(),
-        magnetometerBias = hostMagnetic?.bias?.copyOf() ?: sensorToRuntime(magneticBias),
+        magnetometerBias = hostMagnetic?.bias?.copyOf() ?: magneticBias.copyOf(),
         gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
             TemperatureGyroscopeBias(it.temperatureCelsius, it.bias.copyOf())
         },
@@ -41,7 +41,7 @@ internal class XrealFactoryCalibration private constructor(
         accelerometerCorrectionMatrix = accelerationMatrix.copyOf(),
         gyroscopeCorrectionMatrix = gyroscopeMatrix.copyOf(),
         magnetometerCorrectionMatrix = hostMagnetic?.correctionMatrix?.copyOf()
-            ?: sensorMatrixToRuntime(magneticMatrix),
+            ?: magneticMatrix.copyOf(),
         gyroscopeAccelerationSensitivityMatrix = gyroscopeGSensitivity.copyOf(),
         parametersAppliedToSamples = parametersAppliedToSamples,
         rawPayloads = listOf(ImuRawCalibrationPayload("xreal.factory-json", bytes = rawFactoryJson.copyOf())),
@@ -91,24 +91,29 @@ internal class XrealFactoryCalibration private constructor(
             val temperatureBiases = imu.optJSONArray("gyro_bias_temp_data")?.objects()?.map {
                 TemperatureBias(
                     it.optDouble("temp", Float.NaN.toDouble()).toFloat(),
-                    sensorToRuntime(transform(effectiveGyroscopeMatrixSensor, it.floatArrayOrZeros("bias", 3))),
+                    transform(effectiveGyroscopeMatrixSensor, it.floatArrayOrZeros("bias", 3)),
                 )
             }?.filter { it.temperatureCelsius.isFinite() }?.toMutableList() ?: mutableListOf()
             if (temperatureBiases.isEmpty() && imu.has("bias_temperature")) {
                 temperatureBiases += TemperatureBias(
                     imu.optDouble("bias_temperature", Float.NaN.toDouble()).toFloat(),
-                    sensorToRuntime(gyroscopeBiasSensor),
+                    gyroscopeBiasSensor.copyOf(),
                 )
             }
             return XrealFactoryCalibration(
-                accelerationBias = sensorToRuntime(accelerationBiasSensor),
-                gyroscopeBias = sensorToRuntime(gyroscopeBiasSensor),
+                // SDK 3.1 consumes factory vectors in their JSON component
+                // order after the report decoder's transform=1 route. A live
+                // XBX record carried accel_bias bit-for-bit as
+                // [0.018797427,0.040507477,0.014310106]; applying another
+                // runtime sign/permutation here is a proven double transform.
+                accelerationBias = accelerationBiasSensor,
+                gyroscopeBias = gyroscopeBiasSensor,
                 gyroscopeTemperatureBiases = temperatureBiases.filter { it.temperatureCelsius.isFinite() },
                 magneticBias = imu.floatArrayOrZeros("mag_bias", 3),
-                accelerationMatrix = sensorMatrixToRuntime(effectiveAccelerationMatrixSensor),
-                gyroscopeMatrix = sensorMatrixToRuntime(effectiveGyroscopeMatrixSensor),
+                accelerationMatrix = effectiveAccelerationMatrixSensor,
+                gyroscopeMatrix = effectiveGyroscopeMatrixSensor,
                 magneticMatrix = effectiveMagneticMatrixSensor,
-                gyroscopeGSensitivity = sensorMatrixToRuntime(imu.floatArrayOrZeros("gyro_g_sensitivity", 9)),
+                gyroscopeGSensitivity = imu.floatArrayOrZeros("gyro_g_sensitivity", 9),
                 noiseStandardDeviations = imu.optJSONArray("imu_noises")?.floats() ?: floatArrayOf(),
                 centerDisplayFov = centerDisplayFov,
                 rawFactoryJson = bytes.copyOf(),
@@ -200,25 +205,6 @@ internal class XrealFactoryCalibration private constructor(
 
         private fun subtract(value: FloatArray, bias: FloatArray): FloatArray =
             FloatArray(3) { value[it] - bias[it] }
-
-        private fun sensorToRuntime(value: FloatArray): FloatArray =
-            floatArrayOf(-value[0], value[1], value[2])
-
-        /** S * M * S^-1 for the SDK schema's transform=1, S(x,y,z)=(-x,y,z). */
-        private fun sensorMatrixToRuntime(matrix: FloatArray): FloatArray {
-            val basis = arrayOf(
-                floatArrayOf(-1f, 0f, 0f),
-                floatArrayOf(0f, 1f, 0f),
-                floatArrayOf(0f, 0f, 1f),
-            )
-            return FloatArray(9) { index ->
-                val row = index / 3
-                val column = index % 3
-                var value = 0f
-                for (i in 0..2) for (j in 0..2) value += basis[row][i] * matrix[i * 3 + j] * basis[column][j]
-                value
-            }
-        }
 
         private val IDENTITY_MATRIX = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
         private val IDENTITY_QUATERNION = floatArrayOf(0f, 0f, 0f, 1f)

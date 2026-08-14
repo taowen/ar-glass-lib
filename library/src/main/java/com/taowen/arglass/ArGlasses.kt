@@ -65,6 +65,7 @@ data class ImuCalibrationData(
     val state: ImuCalibrationState,
     val accelerometerBiasMetersPerSecondSquared: FloatArray,
     val gyroscopeBiasRadiansPerSecond: FloatArray,
+    /** Magnetometer bias in microteslas, in the same runtime frame as [ImuSample.magneticField]. */
     val magnetometerBias: FloatArray?,
     val gyroscopeTemperatureBiases: List<TemperatureGyroscopeBias> = emptyList(),
     val noiseStandardDeviations: FloatArray = floatArrayOf(),
@@ -158,6 +159,7 @@ data class ImuSample(
     val deviceTimestampNanos: Long,
     val accelerationMetersPerSecondSquared: FloatArray,
     val angularVelocityRadiansPerSecond: FloatArray,
+    /** Raw, decoded magnetic flux density in microteslas; null for a six-axis source. */
     val magneticField: FloatArray?,
     val temperatureCelsius: Float,
     val reportVersion: Int,
@@ -187,6 +189,13 @@ data class ImuTransportMetadata(
     val systemTimestampNanos: Long? = null,
     val sensorTimestampNanos: Long? = null,
     val dataMask: Int? = null,
+    /**
+     * Whether [ImuSample.magneticField] is a newly sampled observation in this
+     * report. False means the vector is a valid protocol cache that must not
+     * be submitted to fusion again; null means the transport has no freshness
+     * signal. This is independent of whether a magnetometer exists.
+     */
+    val magneticFieldFresh: Boolean? = null,
     val imuId: Int? = null,
     val frameId: Long? = null,
     val gyroscopeNumerator: Float? = null,
