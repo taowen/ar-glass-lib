@@ -4,6 +4,7 @@ import com.taowen.arglass.ImuCalibrationData
 import com.taowen.arglass.ImuCalibrationLevel
 import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuRawCalibrationPayload
 import com.taowen.arglass.TemperatureGyroscopeBias
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -21,6 +22,7 @@ internal class VitureV2Calibration private constructor(
     private val accelerometerTemperatureBiases: List<TemperatureBias>,
     private val magnetometerTemperatureBiases: List<TemperatureBias>,
     private val noiseStandardDeviations: FloatArray,
+    private val rawPayloads: List<ImuRawCalibrationPayload>,
 ) {
     fun publicData(): ImuCalibrationData {
         // decodeImu already converts report g units with STANDARD_GRAVITY.
@@ -44,6 +46,7 @@ internal class VitureV2Calibration private constructor(
             gyroscopeCorrectionMatrix = gyroscopeMatrix.copyOf(),
             magnetometerCorrectionMatrix = magnetometerMatrix.copyOf(),
             parametersAppliedToSamples = false,
+            rawPayloads = rawPayloads.map { it.copy(bytes = it.bytes.copyOf()) },
         )
     }
 
@@ -94,6 +97,19 @@ internal class VitureV2Calibration private constructor(
                     imu.getFloat(116),
                     imu.getFloat(120),
                 ).filter(Float::isFinite).toFloatArray(),
+                rawPayloads = buildList {
+                    add(ImuRawCalibrationPayload("viture.v2-packet", 0x3302, imuPacket.copyOf()))
+                    add(ImuRawCalibrationPayload("viture.v2-packet", 0x3303, magnetometerPacket.copyOf()))
+                    gyroscopeTemperaturePacket?.let {
+                        add(ImuRawCalibrationPayload("viture.v2-packet", 0x3304, it.copyOf()))
+                    }
+                    accelerometerTemperaturePacket?.let {
+                        add(ImuRawCalibrationPayload("viture.v2-packet", 0x3305, it.copyOf()))
+                    }
+                    magnetometerTemperaturePacket?.let {
+                        add(ImuRawCalibrationPayload("viture.v2-packet", 0x3306, it.copyOf()))
+                    }
+                },
             ).also { calibration ->
                 require(
                     listOf(

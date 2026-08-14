@@ -33,6 +33,10 @@ Supported models:
 - Read versioned XREAL IMU reports (acceleration, angular velocity, magnetic field, temperature, and device timestamp).
 - Declare whether a model supplies six- or nine-axis tracking and the calibration level of each sensor.
 - Acquire factory and host calibration coefficients in the driver and expose them through `onImuCalibration`. Decoded SI samples stay raw; estimators decide whether to apply those coefficients. `parametersAppliedToSamples=false` marks that split. `parametersAppliedByDevice=true` is the narrower firmware-applied case.
+- Preserve an exact discrete transport report in `ImuSample.rawReport` when the
+  driver receives one, and preserve readable vendor calibration records in
+  `ImuCalibrationData.rawPayloads`. Native continuous transports may leave
+  `rawReport=null`, but still expose the same decoded SI vectors and calibration API.
 - Query and switch 2D, Half SBS, Full SBS, and high-refresh SBS display modes.
 - List and switch glasses-native display profiles using common width, height, refresh-rate, and 2D/3D layout metadata while keeping each vendor's protocol value inside its driver.
 - Expose capability metadata for host apps that need to correlate glasses models with Android external-display information.
@@ -153,7 +157,22 @@ val profile = connected.model.supportedDisplayProfiles.firstOrNull {
 if (profile != null) session.setDisplayProfile(profile)
 ```
 
-`ArGlassesListener.onImuSample` receives SI-unit samples. The device timestamp remains the original glasses clock and is not replaced by Android receive time; `hostTimestampNanos` is captured immediately after the transport read so latency-sensitive consumers do not have to timestamp a delayed callback. Transport decoding covers units and the runtime axis convention only. `sample.calibration` states which corrections are already present in that sample. `onImuCalibration` publishes factory or host coefficients when the transport makes them available; `parametersAppliedToSamples` says whether those coefficients have already been applied, and `parametersAppliedByDevice=true` identifies opaque firmware-applied coefficients. Consumers must not apply an already-applied set a second time. Extended carriers can expose their timing/scaling fields through `transportMetadata`.
+`ArGlassesListener.onImuSample` receives the same interface for every model:
+acceleration in m/s², angular velocity in rad/s, an optional magnetic vector,
+temperature, device timestamp, host receive timestamp, calibration state,
+optional extended transport metadata, and optional exact `rawReport`. The device
+timestamp remains the original glasses clock and is not replaced by Android
+receive time; `hostTimestampNanos` is captured immediately after the transport
+read so latency-sensitive consumers do not have to timestamp a delayed callback.
+Transport decoding covers units and the runtime axis convention only.
+`sample.calibration` states which corrections are already present in that sample.
+`onImuCalibration` publishes factory or host coefficients plus zero or more
+unmodified `rawPayloads` when the transport makes them available;
+`parametersAppliedToSamples` says whether those coefficients have already been
+applied, and `parametersAppliedByDevice=true` identifies opaque firmware-applied
+coefficients. Consumers must not apply an already-applied set a second time.
+Extended carriers can expose their timing/scaling fields through
+`transportMetadata`.
 
 XBX sessions stop the stream, fetch the complete factory JSON with IMU commands `0x14`/`0x15`, parse its accelerometer/gyroscope/magnetometer biases, per-sensor scale/skew matrices, `accel_q_gyro`/`gyro_q_mag` alignment, gyroscope gravity sensitivity, temperature-indexed gyroscope biases, and noise values, then restart streaming. The driver publishes those coefficients with `parametersAppliedToSamples=false` and leaves each decoded SI sample untouched so the selected pose estimator can reproduce official ownership. SI units and sensor-to-runtime axis mapping remain in the report decoder. A captured XBX A01 factory blob carries the complete schema but uses identity scale/alignment and zero skew/gravity-sensitivity values; those neutral values must not be assumed for A01 Plus or other units. XREAL Air / Air 2 / Air 2 Pro / Air 2 Ultra use the same 0x14/0x15 factory JSON and the same publish-only contract.
 

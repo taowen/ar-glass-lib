@@ -6,6 +6,7 @@ import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuHostCalibrationPhase
 import com.taowen.arglass.ImuHostCalibrationProgress
+import com.taowen.arglass.ImuRawCalibrationPayload
 import com.taowen.arglass.TemperatureGyroscopeBias
 import kotlin.math.PI
 import kotlin.math.abs
@@ -19,6 +20,7 @@ internal data class RayneoFactoryCalibration(
     val sensorTransform: FloatArray,
     val accelerationOffset: FloatArray,
     val gyroscopeTemperatureBiases: List<RayneoGyroscopeTemperatureBias> = emptyList(),
+    val rawFactoryPayload: ByteArray? = null,
 ) {
     init {
         require(sensorTransform.size == 9)
@@ -47,6 +49,9 @@ internal data class RayneoFactoryCalibration(
             gyroscopeCorrectionMatrix = publicCorrectionMatrix(),
             magnetometerCorrectionMatrix = magnetic?.correctionMatrix?.copyOf(),
             parametersAppliedToSamples = false,
+            rawPayloads = rawFactoryPayload?.let {
+                listOf(ImuRawCalibrationPayload("rayneo.factory-report", 0x3c, it.copyOf()))
+            }.orEmpty(),
         )
     }
 

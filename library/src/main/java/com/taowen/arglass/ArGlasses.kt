@@ -20,6 +20,16 @@ data class ImuCalibrationState(
 
 enum class ImuCalibrationSource { DEVICE_FACTORY, HOST_ESTIMATE, MIXED }
 
+/** Encoding and provenance of one unmodified calibration payload. */
+data class ImuRawCalibrationPayload(
+    /** Driver-stable name such as `xreal.factory-json` or `viture.v2-packet`. */
+    val format: String,
+    /** Command/report identifier when the transport exposes one. */
+    val id: Int? = null,
+    /** Exact bytes received from the device or loaded from the host calibration store. */
+    val bytes: ByteArray,
+)
+
 enum class ImuHostCalibrationPhase { COLLECTING, DISTURBED, READY }
 
 data class ImuHostCalibrationProgress(
@@ -61,6 +71,12 @@ data class ImuCalibrationData(
     val parametersAppliedByDevice: Boolean = false,
     /** True when the emitted [ImuSample] values already include these corrections. */
     val parametersAppliedToSamples: Boolean = true,
+    /**
+     * Unmodified vendor calibration records. The list is empty only when the device exposes no
+     * readable calibration payload. Consumers must select records by [ImuRawCalibrationPayload.format]
+     * instead of assuming one vendor schema.
+     */
+    val rawPayloads: List<ImuRawCalibrationPayload> = emptyList(),
 )
 
 data class ImuTrackingSupport(
@@ -137,6 +153,12 @@ data class ImuSample(
     val calibration: ImuCalibrationState = ImuCalibrationState(),
     /** Optional transport fields retained from an extended device IMU carrier. */
     val transportMetadata: ImuTransportMetadata? = null,
+    /**
+     * Exact transport report when the driver receives a discrete report. Native streaming
+     * transports may leave this null. This field is diagnostic input; fusion uses the decoded SI
+     * vectors above.
+     */
+    val rawReport: ByteArray? = null,
 )
 
 /** Per-device tangent-space field of view returned by the glasses calibration. */

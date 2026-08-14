@@ -39,10 +39,11 @@ internal class GrawoowG530Session(usbManager:UsbManager,private val mcuDevice:Us
         return response.copyOfRange(6,(6+(response[5].toInt()and 255)).coerceAtMost(count))
     }
     private fun readImu(){status("${model.displayName} IMU 已连接");val bytes=ByteArray(128);val endpoint=requireNotNull(imuPort).second
-        val start=System.nanoTime();while(running.get()){val n=requireNotNull(ov).transfer(endpoint,bytes,250);if(n>=100)decode(bytes,start)?.let{sample->executor.execute{listener.onImuSample(sample)}}}}
-    private fun decode(p:ByteArray,start:Long):ImuSample?{val b=ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN);val g=(Math.PI/180.0/16.4).toFloat();val a=9.81f/16384f
+        val start=System.nanoTime();while(running.get()){val n=requireNotNull(ov).transfer(endpoint,bytes,250);if(n>=100)decode(bytes,n,start)?.let{sample->executor.execute{listener.onImuSample(sample)}}}}
+    private fun decode(p:ByteArray,length:Int,start:Long):ImuSample?{val b=ByteBuffer.wrap(p,0,length).order(ByteOrder.LITTLE_ENDIAN);val g=(Math.PI/180.0/16.4).toFloat();val a=9.81f/16384f
         val gx=b.getInt(0x3c)*g;val gy=b.getInt(0x40)*g;val gz=b.getInt(0x44)*g;val ax=b.getInt(0x58)*a;val ay=b.getInt(0x5c)*a;val az=b.getInt(0x60)*a
-        return ImuSample(System.nanoTime()-start,floatArrayOf(-ay,-az,ax),floatArrayOf(-gy,-gz,gx),null,Float.NaN,1)}
+        return ImuSample(System.nanoTime()-start,floatArrayOf(-ay,-az,ax),floatArrayOf(-gy,-gz,gx),null,Float.NaN,1,
+            rawReport=p.copyOf(length))}
     private fun status(s:String)=executor.execute{listener.onStatus(s)}
     override fun close(){if(!running.compareAndSet(true,false))return;worker?.interrupt();if(Thread.currentThread()!==worker)worker?.join(1200);imuPort?.first?.let{ov?.release(it)};ov?.close();mcu.release(mcuDevice.getInterface(0));mcu.close()}
     private companion object {fun findImuPort(d:UsbDevice):Pair<UsbInterface,UsbEndpoint>{for(i in 0 until d.interfaceCount){val f=d.getInterface(i);for(e in 0 until f.endpointCount){val p=f.getEndpoint(e);if(p.address==0x89)return f to p}};error("Grawoow IMU endpoint 0x89 not found")}}

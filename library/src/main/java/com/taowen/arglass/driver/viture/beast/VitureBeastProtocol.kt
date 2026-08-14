@@ -78,6 +78,7 @@ internal object VitureBeastProtocol {
             (buffer.getShort(8).toInt() and 0xffff) * 0.2f,
             2,
             hostTimestampNanos,
+            rawReport = bytes.copyOf(length),
         )
     }
 

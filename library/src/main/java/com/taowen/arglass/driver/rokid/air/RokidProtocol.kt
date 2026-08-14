@@ -28,6 +28,7 @@ internal object RokidProtocol {
             magneticField = values.copyOfRange(6, 9),
             temperatureCelsius = Float.NaN,
             reportVersion = 17,
+            rawReport = bytes.copyOf(length),
         )
     }
 

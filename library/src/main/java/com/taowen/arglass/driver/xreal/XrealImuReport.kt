@@ -18,5 +18,6 @@ internal fun decodeXrealImuReport(report: ByteArray): ImuSample? {
         magneticField = magneticField,
         temperatureCelsius = values[10],
         reportVersion = values[11].toInt(),
+        rawReport = report.copyOf(),
     )
 }

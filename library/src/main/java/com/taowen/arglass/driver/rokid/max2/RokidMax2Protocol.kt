@@ -28,6 +28,9 @@ internal object RokidMax2Protocol {
                         temperatureCelsius = Float.NaN,
                         reportVersion = buffer.getInt(offset + 44),
                         hostTimestampNanos = hostTimestampNanos,
+                        // One USB transfer contains a batch. Each decoded
+                        // sample retains that exact enclosing report.
+                        rawReport = packet.copyOf(length),
                     ),
                 )
             }

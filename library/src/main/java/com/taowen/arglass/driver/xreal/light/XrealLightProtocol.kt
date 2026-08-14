@@ -77,6 +77,7 @@ internal object XrealLightProtocol {
         val radians = (Math.PI / 180.0).toFloat()
         val gx=b.getInt(60)*gm/gd*radians; val gy=b.getInt(64)*gm/gd*radians; val gz=b.getInt(68)*gm/gd*radians
         val ax=b.getInt(88)*am/ad*9.81f; val ay=b.getInt(92)*am/ad*9.81f; val az=b.getInt(96)*am/ad*9.81f
-        return ImuSample(timestamp, floatArrayOf(ax,-ay,-az), floatArrayOf(gx,-gy,-gz), null, Float.NaN, 1)
+        return ImuSample(timestamp, floatArrayOf(ax,-ay,-az), floatArrayOf(gx,-gy,-gz), null, Float.NaN, 1,
+            rawReport = bytes.copyOf())
     }
 }

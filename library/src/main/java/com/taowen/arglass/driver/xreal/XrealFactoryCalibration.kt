@@ -4,6 +4,7 @@ import com.taowen.arglass.ImuCalibrationData
 import com.taowen.arglass.ImuCalibrationLevel
 import com.taowen.arglass.ImuCalibrationSource
 import com.taowen.arglass.ImuCalibrationState
+import com.taowen.arglass.ImuRawCalibrationPayload
 import com.taowen.arglass.TemperatureGyroscopeBias
 import com.taowen.arglass.driver.rayneo.airfamily.RayneoMagneticCalibration
 import org.json.JSONArray
@@ -21,6 +22,7 @@ internal class XrealFactoryCalibration private constructor(
     private val gyroscopeGSensitivity: FloatArray,
     val noiseStandardDeviations: FloatArray,
     val centerDisplayFov: com.taowen.arglass.GlassesTangentFov?,
+    private val rawFactoryJson: ByteArray,
 ) {
     fun publicData(
         hostMagnetic: RayneoMagneticCalibration? = null,
@@ -42,6 +44,7 @@ internal class XrealFactoryCalibration private constructor(
             ?: sensorMatrixToRuntime(magneticMatrix),
         gyroscopeAccelerationSensitivityMatrix = gyroscopeGSensitivity.copyOf(),
         parametersAppliedToSamples = parametersAppliedToSamples,
+        rawPayloads = listOf(ImuRawCalibrationPayload("xreal.factory-json", bytes = rawFactoryJson.copyOf())),
     )
 
     private fun calibrationState(hasMagnetometer: Boolean, hasHostMagnetic: Boolean) = ImuCalibrationState(
@@ -108,6 +111,7 @@ internal class XrealFactoryCalibration private constructor(
                 gyroscopeGSensitivity = sensorMatrixToRuntime(imu.floatArrayOrZeros("gyro_g_sensitivity", 9)),
                 noiseStandardDeviations = imu.optJSONArray("imu_noises")?.floats() ?: floatArrayOf(),
                 centerDisplayFov = centerDisplayFov,
+                rawFactoryJson = bytes.copyOf(),
             )
         }
 

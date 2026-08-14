@@ -243,6 +243,7 @@ internal class RayneoAirFamilySession(
         factoryCalibration = RayneoFactoryCalibration(
             sensorTransform = values.copyOfRange(0, 9),
             accelerationOffset = values.copyOfRange(9, 12),
+            rawFactoryPayload = packet.copyOf(),
         ).also { calibration ->
             if (!protocol.readsGyroscopeTemperatureBiases) {
                 executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
@@ -378,6 +379,7 @@ internal class RayneoAirFamilySession(
             temperatureCelsius = temperatureCelsius,
             reportVersion = 1,
             hostTimestampNanos = hostTimestampNanos,
+            rawReport = packet.copyOf(64),
         )
     }
 

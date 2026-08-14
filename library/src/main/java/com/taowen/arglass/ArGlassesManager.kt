@@ -47,6 +47,7 @@ class ArGlassesManager(
     private var pendingPermission: UsbDevice? = null
     private var pendingGlasses: ConnectedGlasses? = null
     private var session: ArGlassesSession? = null
+    @Volatile private var latestImuCalibration: ImuCalibrationData? = null
     private val diagnosticListener = object : ArGlassesListener {
         override fun onDevicesChanged(devices: List<ConnectedGlasses>) {
             ArGlassesDiagnostics.recordEvent(
@@ -72,6 +73,7 @@ class ArGlassesManager(
         }
 
         override fun onImuCalibration(calibration: ImuCalibrationData) {
+            latestImuCalibration = calibration
             ArGlassesDiagnostics.recordEvent(
                 "imu calibration source=${calibration.source} state=${calibration.state} " +
                     "temperaturePoints=${calibration.gyroscopeTemperatureBiases.size}",
@@ -89,7 +91,8 @@ class ArGlassesManager(
         }
 
         override fun onImuSample(sample: ImuSample) {
-            listener.onImuSample(sample)
+            val state = latestImuCalibration?.state ?: sample.calibration
+            listener.onImuSample(if (sample.calibration == state) sample else sample.copy(calibration = state))
         }
     }
     private val receiver = object : BroadcastReceiver() {
@@ -164,6 +167,7 @@ class ArGlassesManager(
             "open session model=${model.id} feature=$feature vid=0x%04x pid=0x%04x".format(device.vendorId, device.productId),
         )
         session?.close()
+        latestImuCalibration = null
         val driver = GlassesDriverRegistry.driver(model)
         val devices = listOf(device) + if (driver is CompositeGlassesDriver)
             driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
