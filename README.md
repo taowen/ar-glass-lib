@@ -393,7 +393,18 @@ mode mapping instead of forcing one fixed preferred mode: 60 Hz 2D maps to
 - Their current cross-checked mode values match, but each model has its own
   profile object and profile ID prefix (`xreal_air_*`, `xreal_air_2_*`,
   `xreal_air_2_pro_*`) instead of sharing one public profile table.
-- Their 64-byte versioned IMU reports and initialization commands are cross-checked against both `ar-drivers-rs` and XRLinuxDriver's `xrealInterfaceLibrary`.
+- Their 64-byte versioned IMU reports and initialization commands are
+  cross-checked against both the SDK 3.1 `libnr_api.so` embedded schemas and
+  the recovered firmware. Air, Air 2, Air 2 Pro, Air 2 Ultra, XBX A01 and XBX
+  A01 Plus all select the SDK's `transform=1` report route: gyro and
+  acceleration publish `[-source0,+source2,+source1]`, while magnetic publishes
+  `[source1,source2,source0]` in microteslas. Model IDs choose schema/transport;
+  they do not justify a second model-specific axis transform in ar-glass-lib.
+- All common reports carry nine decoded axes. Factory JSON is published in the
+  component order consumed by SDK 3.1 and remains unapplied to the raw SI
+  samples. The report's byte 56 (v1) or 62 (v2) is the magnetic-observation
+  freshness flag: the last magnetic vector remains visible on cached reports,
+  but host calibration and fusion must consume only fresh observations.
 
 ## XREAL XBX protocol notes
 
@@ -510,12 +521,25 @@ where the transport is native-backed.
   also preserves the packed carrier tail: IMU/frame IDs, gyro/accelerometer/
   magnetometer numerators, output-numerator mask and group delay. The older
   XRLinuxDriver reader stopped at 84 bytes and discarded these fields.
+- The public `rawReport` is that exact 134-byte TCP frame, and the host timestamp
+  is captured by the native reader when a complete frame is removed from the
+  TCP reassembly buffer. `data_mask & 0x4` is exposed as the carrier's magnetic
+  observation/freshness signal.
 - Recovered One-family firmware applies the per-sensor accelerometer, gyroscope
   and magnetometer factory matrices/biases before publishing `NRImuSubmitExt`.
   The coefficients themselves are device-owned and absent from the carrier, so
   `onImuCalibration` reports `DEVICE_FACTORY`, all three sensors as `FACTORY`,
   and `parametersAppliedByDevice=true`. The driver no longer adds a second host
   hard/soft-iron fit or suppresses magnetic samples while collecting one.
+- Pilot `libnr_driver.so`'s `NRImuSubmitExt::HandleMessage` path
+  (`0x34aa40..0x34ab64` in the recovered image) copies the packed carrier into
+  the callback payload without sign changes or component permutation. The
+  external-sensor protobuf conversion at `libnr_external_sensor.so+0x64c40`
+  likewise preserves named x/y/z order. Firmware converter tables perform the
+  device/protocol-specific raw swap before this boundary. Consequently the
+  carrier's gyro, acceleration and magnetic x/y/z floats are published as-is;
+  XRLinuxDriver's later `[-x,-z,-y]` mapping is not part of the official path
+  and must not be reintroduced.
 - XRLinuxDriver notes that One/One Pro/1S require latest firmware and glasses
   stabilizer/anchor features disabled. Those prerequisites apply to the IMU
   path; they do not by themselves define an open 2D/3D switching protocol.
@@ -563,8 +587,17 @@ where the transport is native-backed.
 - The driver sends the SDK-enable command before display control and maintains
   the required 250 ms heartbeat while a display session is active.
 - OV580 IMU reports expose independently scaled gyro and accelerometer fields;
-  USB transfer and decoding were cross-checked against `ar-drivers-rs` and
-  `android-sensor-probe`.
+  the old Light layout is separate from the common 64-byte `transform=1`
+  protocol. Its runtime mapping is `[x,-y,-z]`, gyro converts degrees/s to
+  radians/s, and acceleration uses the firmware/reference value 9.81 m/s² per
+  g. These rules were cross-checked against the recovered Light transport and
+  `ar-drivers-rs`; XBX/Common or One-family transforms must not be copied here.
+- Initialization stops streaming with `0x19/0`, reads the complete OV580
+  factory stream through `0x14` then repeated `0x15`, publishes both the exact
+  binary configuration and its embedded JSON, and restarts with `0x19/1`.
+  Light is a six-axis source. Its accelerometer and gyroscope factory biases are
+  exposed in the same `[x,-y,-z]` runtime frame, with
+  `parametersAppliedToSamples=false`; decoded samples remain raw SI values.
 
 ## Grawoow G530 / MetaVision M53 protocol notes
 

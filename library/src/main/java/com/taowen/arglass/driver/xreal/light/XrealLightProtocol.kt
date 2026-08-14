@@ -67,7 +67,11 @@ internal object XrealLightProtocol {
     fun wire(profile: GlassesDisplayProfile): Char? =
         profileEntries.firstOrNull { it.profile.id == profile.id }?.wireValue
 
-    fun decodeImu(bytes: ByteArray): ImuSample? {
+    fun decodeImu(
+        bytes: ByteArray,
+        hostTimestampNanos: Long = System.nanoTime(),
+        calibrationState: com.taowen.arglass.ImuCalibrationState = com.taowen.arglass.ImuCalibrationState(),
+    ): ImuSample? {
         if (bytes.size < 108 || bytes[0].toInt() != 1) return null
         val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         val timestamp = b.getLong(44)
@@ -77,7 +81,16 @@ internal object XrealLightProtocol {
         val radians = (Math.PI / 180.0).toFloat()
         val gx=b.getInt(60)*gm/gd*radians; val gy=b.getInt(64)*gm/gd*radians; val gz=b.getInt(68)*gm/gd*radians
         val ax=b.getInt(88)*am/ad*9.81f; val ay=b.getInt(92)*am/ad*9.81f; val az=b.getInt(96)*am/ad*9.81f
-        return ImuSample(timestamp, floatArrayOf(ax,-ay,-az), floatArrayOf(gx,-gy,-gz), null, Float.NaN, 1,
-            rawReport = bytes.copyOf())
+        return ImuSample(
+            timestamp,
+            floatArrayOf(ax, -ay, -az),
+            floatArrayOf(gx, -gy, -gz),
+            null,
+            Float.NaN,
+            1,
+            hostTimestampNanos = hostTimestampNanos,
+            calibration = calibrationState,
+            rawReport = bytes.copyOf(),
+        )
     }
 }

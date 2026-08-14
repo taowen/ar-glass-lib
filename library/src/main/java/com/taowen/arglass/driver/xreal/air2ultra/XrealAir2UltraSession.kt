@@ -110,8 +110,9 @@ internal class XrealAir2UltraSession(
             val started = usb.imu(0x19, byteArrayOf(1))
             status(if (started.isEmpty()) "IMU 启动命令未收到响应；继续被动监听" else "IMU 已启动")
             while (running.get()) {
-                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)?.let(::observeMagnetic)
-                    ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
+                val report = usb.readImu()?.takeIf { it.size == 64 } ?: continue
+                val sample = decodeXrealImuReport(report, System.nanoTime()) ?: continue
+                executor.execute { listener.onImuSample(observeMagnetic(sample)) }
             }
         } catch (error: Throwable) { if (running.get()) status("IMU 会话失败：${error.message}") }
     }
@@ -135,6 +136,7 @@ internal class XrealAir2UltraSession(
     }
 
     private fun observeMagnetic(sample: ImuSample): ImuSample {
+        if (sample.transportMetadata?.magneticFieldFresh != true) return sample
         val factory = factoryCalibration ?: return sample
         val magnetic = sample.magneticField ?: return sample
         val update = magneticCalibrator.update(magnetic)

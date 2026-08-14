@@ -37,11 +37,13 @@ internal fun model(id: String, name: String, pid: Int, profiles: List<com.taowen
     preferred3dDisplayProfile = profiles.firstOrNull { it.layout == GlassesDisplayLayout.FULL_SBS_3D },
     showInArctrlDisplayModeToggle = true,
     imuTrackingSupport = ImuTrackingSupport(
-        axisCount = 6,
+        // All SDK 3.1 common-report variants carry gyro, accel and magnetic
+        // vectors. Magnetic calibration readiness is separate from axis count.
+        axisCount = 9,
         calibration = ImuCalibrationState(
             accelerometer = ImuCalibrationLevel.FACTORY,
             gyroscope = ImuCalibrationLevel.FACTORY,
-            magnetometer = ImuCalibrationLevel.NONE,
+            magnetometer = ImuCalibrationLevel.FACTORY,
         ),
     ),
 )

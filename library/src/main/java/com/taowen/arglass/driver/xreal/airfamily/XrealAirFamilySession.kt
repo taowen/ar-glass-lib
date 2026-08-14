@@ -73,14 +73,15 @@ internal class XrealAirFamilySession(
             factoryCalibration = readCalibration().also { calibration ->
                 magneticCalibration = RayneoMagneticCalibrationStore.load(calibrationStoreKey)
                 magneticCalibrator.useCalibration(magneticCalibration)
-                executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration, hasMagnetometer = false)) }
+                executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
             }
             usb.imu(0x1a)
             val started = usb.imu(0x19, byteArrayOf(1))
             status(if (started.isEmpty()) "IMU 启动命令未收到响应；继续被动监听" else "IMU 已启动")
             while (running.get()) {
-                usb.readImu()?.takeIf { it.size == 64 }?.let(::decodeXrealImuReport)?.let(::observeMagnetic)
-                    ?.let { sample -> executor.execute { listener.onImuSample(sample) } }
+                val report = usb.readImu()?.takeIf { it.size == 64 } ?: continue
+                val sample = decodeXrealImuReport(report, System.nanoTime()) ?: continue
+                executor.execute { listener.onImuSample(observeMagnetic(sample)) }
             }
         } catch (error: Throwable) {
             if (running.get()) status("IMU 会话失败：${error.message}")
@@ -108,6 +109,10 @@ internal class XrealAirFamilySession(
     }
 
     private fun observeMagnetic(sample: ImuSample): ImuSample {
+        // The report repeats the last magnetic vector between real magnetic
+        // observations. SDK 3.1 gates its magnetic path with byte 56/62; do
+        // the same so cached vectors cannot bias host coverage or fitting.
+        if (sample.transportMetadata?.magneticFieldFresh != true) return sample
         val factory = factoryCalibration ?: return sample
         val magnetic = sample.magneticField ?: return sample
         val update = magneticCalibrator.update(magnetic)
@@ -142,7 +147,7 @@ internal class XrealAirFamilySession(
         lastProgressSamples = -PROGRESS_INTERVAL
         lastProgressPhase = null
         factoryCalibration?.let {
-            executor.execute { listener.onImuCalibration(it.publicData(hasMagnetometer = false)) }
+            executor.execute { listener.onImuCalibration(it.publicData()) }
         }
         status("${model.displayName} 已清除磁力计 host 校准；请缓慢绕三个轴旋转眼镜")
         return true

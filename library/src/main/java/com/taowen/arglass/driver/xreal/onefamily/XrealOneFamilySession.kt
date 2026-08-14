@@ -127,11 +127,13 @@ internal class XrealOneFamilySession(
             magnetic,
             buffer.getFloat(44),
             buffer.getInt(48),
+            hostTimestampNanos = buffer.getLong(100),
             calibration = XrealOneFactoryCalibration.STATE,
             transportMetadata = ImuTransportMetadata(
                 systemTimestampNanos = buffer.getLong(52),
                 sensorTimestampNanos = buffer.getLong(60),
                 dataMask = buffer.getInt(68),
+                magneticFieldFresh = (buffer.getInt(68) and 0x4) != 0,
                 imuId = buffer.getInt(72),
                 frameId = buffer.getInt(76).toLong() and 0xffff_ffffL,
                 gyroscopeNumerator = buffer.getFloat(80),
@@ -140,6 +142,7 @@ internal class XrealOneFamilySession(
                 outputNumeratorMask = buffer.getInt(92),
                 groupDelay = buffer.getFloat(96),
             ),
+            rawReport = sample.copyOfRange(NATIVE_IMU_RAW_REPORT_OFFSET, NATIVE_IMU_SAMPLE_SIZE),
         )
     }
 
@@ -257,6 +260,7 @@ internal class XrealOneFamilySession(
 
     private companion object {
         const val TAG = "ArGlassXrealOne"
-        const val NATIVE_IMU_SAMPLE_SIZE = 100
+        const val NATIVE_IMU_RAW_REPORT_OFFSET = 108
+        const val NATIVE_IMU_SAMPLE_SIZE = NATIVE_IMU_RAW_REPORT_OFFSET + 134
     }
 }

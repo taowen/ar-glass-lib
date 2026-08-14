@@ -5,6 +5,7 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.SessionFeature
 import com.taowen.arglass.driver.CompositeGlassesDriver
 import com.taowen.arglass.driver.DriverSession
@@ -21,6 +22,7 @@ internal object XrealLightDriver : CompositeGlassesDriver {
             preferred2dDisplayProfile = XrealLightProtocol.twoDimensionalProfile,
             preferred3dDisplayProfile = XrealLightProtocol.fullSbs3dProfile,
             showInArctrlDisplayModeToggle = true,
+            imuTrackingSupport = ImuTrackingSupport(6, XrealLightFactoryCalibration.STATE),
         ) else null
 
     override fun companionDevices(allDevices: Collection<UsbDevice>, primary: UsbDevice) =

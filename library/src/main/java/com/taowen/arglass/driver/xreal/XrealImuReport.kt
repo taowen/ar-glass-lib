@@ -7,7 +7,10 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** Decodes the common XREAL report without applying factory calibration. */
-internal fun decodeXrealImuReport(report: ByteArray): ImuSample? {
+internal fun decodeXrealImuReport(
+    report: ByteArray,
+    hostTimestampNanos: Long = System.nanoTime(),
+): ImuSample? {
     val values = NativeBridge.decodeImuReport(report)?.takeIf { it.size == 12 } ?: return null
     val magneticField = floatArrayOf(values[7], values[8], values[9])
     val version = values[11].toInt()
@@ -21,6 +24,7 @@ internal fun decodeXrealImuReport(report: ByteArray): ImuSample? {
         magneticField = magneticField,
         temperatureCelsius = values[10],
         reportVersion = version,
+        hostTimestampNanos = hostTimestampNanos,
         transportMetadata = ImuTransportMetadata(
             sensorTimestampNanos = ByteBuffer.wrap(report, sensorTimestampOffset, 8)
                 .order(ByteOrder.LITTLE_ENDIAN).long,

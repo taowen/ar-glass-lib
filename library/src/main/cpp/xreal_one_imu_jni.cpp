@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -25,7 +26,7 @@ namespace {
 // NRImuSubmitExt carrier, so the wire frame is 6 + 128 bytes, not 84 bytes.
 constexpr std::array<std::uint8_t, 6> kHeader = {0x28, 0x36, 0x00, 0x00, 0x00, 0x80};
 constexpr std::size_t kFrameSize = 6 + 0x80;
-constexpr std::size_t kSampleSize = 100;
+constexpr std::size_t kSampleSize = 108 + kFrameSize;
 
 template <typename T>
 T read_le(const std::uint8_t* data) {
@@ -39,6 +40,7 @@ void write_bytes(std::uint8_t* out, std::size_t offset, const void* value, std::
 }
 
 struct XrealOneSample {
+    std::uint64_t host_timestamp_nanos = 0;
     std::uint64_t system_timestamp_nanos = 0;
     std::uint64_t timestamp_nanos = 0;
     std::uint64_t sensor_timestamp_nanos = 0;
@@ -55,6 +57,7 @@ struct XrealOneSample {
     float magnetometer_numerator = std::numeric_limits<float>::quiet_NaN();
     std::uint32_t output_numerator_mask = 0;
     float group_delay = std::numeric_limits<float>::quiet_NaN();
+    std::array<std::uint8_t, kFrameSize> raw_frame{};
 };
 
 class ScopedFd {
@@ -166,6 +169,9 @@ private:
                 pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(kHeader.size()));
                 continue;
             }
+            decoded.host_timestamp_nanos = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count());
             pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(kFrameSize));
             out = decoded;
             return true;
@@ -194,12 +200,17 @@ private:
         out.system_timestamp_nanos = read_le<std::uint64_t>(frame + 6);
         out.timestamp_nanos = read_le<std::uint64_t>(frame + 14);
         out.sensor_timestamp_nanos = read_le<std::uint64_t>(frame + 22);
-        out.acceleration = {-ax, -az, -ay};
-        out.gyro = {-gx, -gz, -gy};
+        // Pilot's protocol converter has already selected/swapped raw axes and
+        // applied the model's factory calibration before NRImuSubmitExt. The
+        // official HandleMessage path forwards these named x/y/z float fields
+        // unchanged; applying XRLinuxDriver's {-x,-z,-y} here was a second,
+        // unsupported coordinate transform.
+        out.acceleration = {ax, ay, az};
+        out.gyro = {gx, gy, gz};
         out.data_mask = read_le<std::uint32_t>(frame + 30);
         out.magnetic_valid = (out.data_mask & 0x4U) != 0U &&
                 std::isfinite(mx) && std::isfinite(my) && std::isfinite(mz);
-        if (out.magnetic_valid) out.magnetic = {-mx, -mz, -my};
+        if (out.magnetic_valid) out.magnetic = {mx, my, mz};
         out.temperature = read_le<float>(frame + 70);
         out.imu_id = frame[74];
         out.frame_id = read_le<std::uint32_t>(frame + 75);
@@ -208,6 +219,7 @@ private:
         out.magnetometer_numerator = read_le<float>(frame + 87);
         out.output_numerator_mask = read_le<std::uint32_t>(frame + 91);
         out.group_delay = read_le<float>(frame + 95);
+        std::copy_n(frame, kFrameSize, out.raw_frame.begin());
         return true;
     }
 
@@ -254,6 +266,8 @@ jbyteArray to_sample_array(JNIEnv* env, const XrealOneSample& sample) {
     write_bytes(bytes.data(), 88, &sample.magnetometer_numerator, sizeof(sample.magnetometer_numerator));
     write_bytes(bytes.data(), 92, &sample.output_numerator_mask, sizeof(sample.output_numerator_mask));
     write_bytes(bytes.data(), 96, &sample.group_delay, sizeof(sample.group_delay));
+    write_bytes(bytes.data(), 100, &sample.host_timestamp_nanos, sizeof(sample.host_timestamp_nanos));
+    write_bytes(bytes.data(), 108, sample.raw_frame.data(), sample.raw_frame.size());
     auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()), reinterpret_cast<const jbyte*>(bytes.data()));
     return result;

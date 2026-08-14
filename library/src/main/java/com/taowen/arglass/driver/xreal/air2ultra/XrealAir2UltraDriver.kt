@@ -35,7 +35,7 @@ internal object XrealAir2UltraDriver : GlassesDriver {
                 calibration = ImuCalibrationState(
                     accelerometer = ImuCalibrationLevel.FACTORY,
                     gyroscope = ImuCalibrationLevel.FACTORY,
-                    magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
+                    magnetometer = ImuCalibrationLevel.FACTORY,
                 ),
             ),
         ) else null
