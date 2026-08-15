@@ -181,14 +181,16 @@ XBX sessions stop the stream, fetch the complete factory JSON with IMU commands 
 RayNeo Air 3/4-family sessions query device information before streaming and honor
 its `magnet_valid` flag. Command replies use report type `0xc8` and echo the
 requested command at byte 8; command `0x3c` then supplies the 3×3 sensor
-correction and accelerometer offset used by the vendor runtime. The driver
-publishes that matrix and offset through `onImuCalibration` with
+correction and gyroscope bias used by the vendor runtime. The recovered formula
+is `accel'=M*accel` and `gyro'=M*(gyroRadPerSecond-bias)`. The driver
+publishes that matrix and bias through `onImuCalibration` with
 `parametersAppliedToSamples=false`, converts angular velocity from degrees/s to
-rad/s, and leaves the decoded SI samples otherwise untouched. A valid
+rad/s, and maps package vectors `[x,y,z]` into the common runtime frame as
+`[x,-z,y]`. A valid
 finite 12-float `0x3c` reply is required before the Air stream starts; a
 timeout or explicit `0xff` response fails the open with no raw-data fallback. In the
 local Taurus 3.0 Pro firmware dated May 21 2025, `0x3c` is an identity matrix
-plus a zero offset. Its 48-byte response contains no magnetic calibration. The
+plus a zero bias. Its 48-byte response contains no magnetic calibration. The
 driver therefore
 collects magnetic extrema while the user rotates the glasses around all three
 axes, fits hard-iron bias plus a 3×3 soft-iron correction, and publishes a
@@ -299,11 +301,14 @@ unrelated glasses.
   `0`, CDC data `1`, vendor HID `5`, and runtime DFU `6`. The HID interface has
   64-byte interrupt OUT `0x04` and IN `0x85` endpoints and carries the `66`/`99`
   protocol. The paired official runtime selects this HID interface, sends
-  command `0x3c`, and consumes its 12-float transform/acceleration-offset reply.
+  command `0x3c`, and consumes its 12-float transform/gyroscope-bias reply.
   It also sends `0x3e` for the complete -20°C..60°C, 81-point gyroscope
   bias table; replies are chunked into at most four XYZ float vectors per HID
-  packet. The GT driver requires both factory replies and exposes all 81
-  converted rad/s points through `onImuCalibration` with
+  packet. The official 2.0.6 and 2.1.1 hosts copy those table floats unchanged;
+  the active legacy path stores but does not consume them, so their firmware
+  dimension cannot be proven farther from that path. The GT driver follows the
+  observed no-conversion behavior, exposes all 81 points as the public rad/s
+  table, and preserves every original `0x3e` report in `rawPayloads`, with
   `parametersAppliedToSamples=false`. Magnetometer hard/soft-iron
   fitting remains host-side and is also published rather than applied to samples.
 - RayNeo transport selection is descriptor-strict rather than "first IN/OUT":
@@ -479,8 +484,13 @@ where the transport is native-backed.
   `3941:AF50`. GT/GT Max board IDs are `0x40`/`0x41`. `3941:AF51` is DFU mode,
   not GT Max runtime mode.
 - Device command `0x3c` supplies the 12-float accelerometer/gyroscope factory
-  transform and acceleration offset. It does not supply a magnetometer
+  transform and gyroscope bias in rad/s. It does not supply a magnetometer
   hard/soft-iron calibration.
+- Official legacy fusion maps accelerometer and gyroscope package vectors as
+  `[x,-z,y]`. Its HID path does not submit the `99 65` magnetic fields to that
+  fusion object, so applying the same rigid package rotation to magnetometer
+  samples remains an explicitly documented inference pending hardware-axis
+  verification; the exact vendor report is retained in `rawReport`.
 - The standalone check APK exposes a RayNeo-specific magnetometer calibration
   Activity. Its implementation is clean-room code and does not package or load
   RayNeo's shared objects. It follows the behavior recovered from the official

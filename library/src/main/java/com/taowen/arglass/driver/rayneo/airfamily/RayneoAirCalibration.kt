@@ -8,7 +8,6 @@ import com.taowen.arglass.ImuHostCalibrationPhase
 import com.taowen.arglass.ImuHostCalibrationProgress
 import com.taowen.arglass.ImuRawCalibrationPayload
 import com.taowen.arglass.TemperatureGyroscopeBias
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -18,20 +17,18 @@ import kotlin.math.sqrt
 
 internal data class RayneoFactoryCalibration(
     val sensorTransform: FloatArray,
-    val accelerationOffset: FloatArray,
+    val gyroscopeBiasRadiansPerSecond: FloatArray,
     val gyroscopeTemperatureBiases: List<RayneoGyroscopeTemperatureBias> = emptyList(),
     val rawFactoryPayload: ByteArray? = null,
+    val rawGyroscopeTemperaturePayloads: List<ByteArray> = emptyList(),
 ) {
     init {
         require(sensorTransform.size == 9)
-        require(accelerationOffset.size == 3)
+        require(gyroscopeBiasRadiansPerSecond.size == 3)
     }
 
     fun publicData(magnetic: RayneoMagneticCalibration? = null): ImuCalibrationData {
         val magneticReady = magnetic != null
-        val nominalGyroscopeBias = gyroscopeTemperatureBiases.minByOrNull {
-            abs(it.temperatureCelsius - NOMINAL_TEMPERATURE_CELSIUS)
-        }?.biasDegreesPerSecond ?: ZERO_VECTOR
         return ImuCalibrationData(
             source = if (magneticReady) ImuCalibrationSource.MIXED else ImuCalibrationSource.DEVICE_FACTORY,
             state = ImuCalibrationState(
@@ -39,19 +36,30 @@ internal data class RayneoFactoryCalibration(
                 gyroscope = ImuCalibrationLevel.FACTORY,
                 magnetometer = if (magneticReady) ImuCalibrationLevel.HOST_ESTIMATED else ImuCalibrationLevel.NONE,
             ),
-            accelerometerBiasMetersPerSecondSquared = FloatArray(3) { -accelerationOffset[it] },
-            gyroscopeBiasRadiansPerSecond = radians(transform(nominalGyroscopeBias)),
+            // Calibrator3dof::Conduct in the RayNeo 2.0.6 and 2.1.1 runtimes computes
+            // accel'=M*accel and gyro'=M*(gyroRadPerSecond-bias). There is no
+            // accelerometer offset in the 12-float 0x3c AB record.
+            accelerometerBiasMetersPerSecondSquared = FloatArray(3),
+            gyroscopeBiasRadiansPerSecond = toRuntimeFrame(transform(gyroscopeBiasRadiansPerSecond)),
             magnetometerBias = magnetic?.bias?.copyOf(),
             gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
-                TemperatureGyroscopeBias(it.temperatureCelsius, radians(transform(it.biasDegreesPerSecond)))
+                TemperatureGyroscopeBias(
+                    it.temperatureCelsius,
+                    toRuntimeFrame(transform(it.biasRadiansPerSecond)),
+                )
             },
-            accelerometerCorrectionMatrix = publicCorrectionMatrix(),
-            gyroscopeCorrectionMatrix = publicCorrectionMatrix(),
+            accelerometerCorrectionMatrix = runtimeCorrectionMatrix(),
+            gyroscopeCorrectionMatrix = runtimeCorrectionMatrix(),
             magnetometerCorrectionMatrix = magnetic?.correctionMatrix?.copyOf(),
             parametersAppliedToSamples = false,
-            rawPayloads = rawFactoryPayload?.let {
-                listOf(ImuRawCalibrationPayload("rayneo.factory-report", 0x3c, it.copyOf()))
-            }.orEmpty(),
+            rawPayloads = buildList {
+                rawFactoryPayload?.let {
+                    add(ImuRawCalibrationPayload("rayneo.factory-report", 0x3c, it.copyOf()))
+                }
+                rawGyroscopeTemperaturePayloads.forEach {
+                    add(ImuRawCalibrationPayload("rayneo.gyroscope-temperature-bias-report", 0x3e, it.copyOf()))
+                }
+            },
         )
     }
 
@@ -61,26 +69,46 @@ internal data class RayneoFactoryCalibration(
             value[2] * sensorTransform[6 + output]
     }
 
-    private fun publicCorrectionMatrix(): FloatArray = floatArrayOf(
+    private fun packageCorrectionMatrix(): FloatArray = floatArrayOf(
         sensorTransform[0], sensorTransform[3], sensorTransform[6],
         sensorTransform[1], sensorTransform[4], sensorTransform[7],
         sensorTransform[2], sensorTransform[5], sensorTransform[8],
     )
 
-    private fun radians(value: FloatArray): FloatArray = value.also { radians ->
-        val radiansPerDegree = (PI / 180.0).toFloat()
-        radians.indices.forEach { radians[it] *= radiansPerDegree }
+    /** R*M*R^-1, where R maps RayNeo package vectors [x,y,z] to [x,-z,y]. */
+    private fun runtimeCorrectionMatrix(): FloatArray {
+        val packageMatrix = packageCorrectionMatrix()
+        return FloatArray(9) { index ->
+            val row = index / 3
+            val column = index % 3
+            val packageRow = RUNTIME_TO_PACKAGE_AXIS[row]
+            val packageColumn = RUNTIME_TO_PACKAGE_AXIS[column]
+            RUNTIME_AXIS_SIGN[row] * packageMatrix[packageRow * 3 + packageColumn] * RUNTIME_AXIS_SIGN[column]
+        }
     }
 
     private companion object {
-        const val NOMINAL_TEMPERATURE_CELSIUS = 25f
-        val ZERO_VECTOR = FloatArray(3)
+        val RUNTIME_TO_PACKAGE_AXIS = intArrayOf(0, 2, 1)
+        val RUNTIME_AXIS_SIGN = floatArrayOf(1f, -1f, 1f)
     }
 }
 
 internal data class RayneoGyroscopeTemperatureBias(
     val temperatureCelsius: Float,
-    val biasDegreesPerSecond: FloatArray,
+    /**
+     * The official 2.0.6/2.1.1 host copies each 0x3e float unchanged into the tracker table; it
+     * never applies the report gyro's degrees-to-radians conversion to this payload. The active
+     * legacy-fusion path stores but does not consume the table, so a firmware-side dimensional
+     * proof is still unavailable. Treating the unchanged values as rad/s is the only behavior
+     * consistent with the official host pipeline and the public SI contract.
+     */
+    val biasRadiansPerSecond: FloatArray,
+)
+
+internal fun toRuntimeFrame(packageVector: FloatArray): FloatArray = floatArrayOf(
+    packageVector[0],
+    -packageVector[2],
+    packageVector[1],
 )
 
 internal data class RayneoMagneticCalibration(

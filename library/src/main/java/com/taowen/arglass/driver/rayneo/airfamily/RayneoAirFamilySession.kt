@@ -92,6 +92,7 @@ internal class RayneoAirFamilySession(
     @Volatile private var factoryCalibrationFailure: String? = null
     @Volatile private var gyroscopeTemperatureBiasesFailure: String? = null
     private val gyroscopeTemperatureBiases = arrayOfNulls<FloatArray>(GYROSCOPE_TEMPERATURE_COUNT)
+    private val gyroscopeTemperatureRawPayloads = mutableMapOf<Int, ByteArray>()
     private val gyroscopeTemperatureChunks = mutableSetOf<Int>()
     private var gyroscopeTemperatureChunkCount = -1
     @Volatile private var probeFailure: String? = null
@@ -242,7 +243,7 @@ internal class RayneoAirFamilySession(
         }
         factoryCalibration = RayneoFactoryCalibration(
             sensorTransform = values.copyOfRange(0, 9),
-            accelerationOffset = values.copyOfRange(9, 12),
+            gyroscopeBiasRadiansPerSecond = values.copyOfRange(9, 12),
             rawFactoryPayload = packet.copyOf(),
         ).also { calibration ->
             if (!protocol.readsGyroscopeTemperatureBiases) {
@@ -279,6 +280,7 @@ internal class RayneoAirFamilySession(
             fail("chunk count changed from $gyroscopeTemperatureChunkCount to $chunkCount")
             return
         }
+        gyroscopeTemperatureRawPayloads[chunkIndex] = packet.copyOf()
         val buffer = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
         repeat(valueCount) { valueIndex ->
             val temperature = firstTemperature + valueIndex
@@ -304,11 +306,15 @@ internal class RayneoAirFamilySession(
         val temperatureBiases = gyroscopeTemperatureBiases.mapIndexed { index, bias ->
             RayneoGyroscopeTemperatureBias(
                 temperatureCelsius = (GYROSCOPE_MINIMUM_TEMPERATURE_CELSIUS + index).toFloat(),
-                biasDegreesPerSecond = requireNotNull(bias),
+                biasRadiansPerSecond = requireNotNull(bias),
             )
         }
         factoryCalibration = requireNotNull(factoryCalibration).copy(
             gyroscopeTemperatureBiases = temperatureBiases,
+            rawGyroscopeTemperaturePayloads = gyroscopeTemperatureRawPayloads
+                .toSortedMap()
+                .values
+                .map(ByteArray::copyOf),
         ).also { calibration ->
             executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
         }
@@ -357,10 +363,16 @@ internal class RayneoAirFamilySession(
         }
 
         val radiansPerDegree = (PI / 180.0).toFloat()
-        val angularVelocity = FloatArray(3) { rawGyroscope[it] * radiansPerDegree }
+        val acceleration = toRuntimeFrame(rawAcceleration)
+        val angularVelocity = toRuntimeFrame(FloatArray(3) { rawGyroscope[it] * radiansPerDegree })
+        // The official HID legacy-fusion path proves [x,-z,y] for accelerometer and gyroscope but
+        // does not submit the 99 65 magnetometer fields to its nine-axis fusion object. RayNeo's
+        // report exposes all three sensors as one package-coordinate record, so use the same rigid
+        // package-to-runtime rotation here; keep rawReport below for future hardware verification.
+        val magneticField = rawMagnetic?.let(::toRuntimeFrame)
 
-        if (rawMagnetic != null) {
-            val update = magneticCalibrator.update(rawMagnetic)
+        if (magneticField != null) {
+            val update = magneticCalibrator.update(magneticField)
             reportMagneticProgress(update)
             val next = update.calibration
             if (next != null && magneticCalibration == null) {
@@ -373,9 +385,9 @@ internal class RayneoAirFamilySession(
 
         return ImuSample(
             deviceTimestampNanos = (buffer.getInt(40).toLong() and 0xffffffffL) * DEVICE_TICK_NANOS,
-            accelerationMetersPerSecondSquared = rawAcceleration,
+            accelerationMetersPerSecondSquared = acceleration,
             angularVelocityRadiansPerSecond = angularVelocity,
-            magneticField = rawMagnetic,
+            magneticField = magneticField,
             temperatureCelsius = temperatureCelsius,
             reportVersion = 1,
             hostTimestampNanos = hostTimestampNanos,

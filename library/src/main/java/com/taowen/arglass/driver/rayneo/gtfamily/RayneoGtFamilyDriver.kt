@@ -33,7 +33,7 @@ internal object RayneoGtFamilyDriver : GlassesDriver {
                     calibration = ImuCalibrationState(
                         accelerometer = ImuCalibrationLevel.FACTORY,
                         gyroscope = ImuCalibrationLevel.FACTORY,
-                        // USB 0x3c supplies only the shared IMU transform/acceleration offset.
+                        // USB 0x3c supplies the shared accel/gyro transform and gyro bias.
                         magnetometer = ImuCalibrationLevel.HOST_ESTIMATED,
                     ),
                 ),
