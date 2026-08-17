@@ -7,6 +7,7 @@ import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesDisplayProfile
 import com.taowen.arglass.GlassesModel
 import com.taowen.arglass.SessionFeature
+import com.taowen.arglass.TemperatureGyroscopeBias
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.xreal.XrealMcuDisplayModeProtocol
 import com.taowen.arglass.driver.xreal.XrealNativeUsbSession
@@ -51,6 +52,8 @@ internal class XrealXbxSession(
         val commands = listOf(
             0x26 to byteArrayOf(), 0x57 to byteArrayOf(), 0x12 to one,
             0x02 to one, 0x34 to byteArrayOf(), 0x35 to byteArrayOf(),
+            // Bootstrap 0xe0 uses int 0, same bits as float 0.0.
+            // The 36 official 0x6f knots are queried after IMU start.
             0xe0 to zero,
         )
         commands.forEach { (command, payload) ->
@@ -98,12 +101,18 @@ internal class XrealXbxSession(
             ensureMcuReady()
             status("正在读取 ${model.displayName} IMU 校准")
             usb.imu(0x19, byteArrayOf(0))
-            imuCalibration = readCalibration()
-            executor.execute { listener.onImuCalibration(requireNotNull(imuCalibration).publicData()) }
+            val factory = readCalibration()
             check(usb.imu(0x1a).isNotEmpty()) { "IMU sync failed" }
             check(usb.imu(0x19, byteArrayOf(1)).isNotEmpty()) { "IMU start failed" }
             check(usb.startImuStream()) { "IMU native stream failed" }
-            status("${model.displayName} IMU 已启动")
+            // Official 0x1f5fa94 queries property 0x6f after glasses init
+            // and IMU streaming. The type-7 peer is MCU 0xe0 with the same
+            // 4-byte float temperature. Do not publish factory 23 items as
+            // that 36-knot input.
+            val knots = readOfficial6fKnots()
+            imuCalibration = factory.withOfficial6fKnots(knots)
+            executor.execute { listener.onImuCalibration(requireNotNull(imuCalibration).publicData()) }
+            status("${model.displayName} IMU 已启动；0x6f/MCU 0xe0 ${knots.size} 项")
             while (running.get()) {
                 usb.readImuRecord()?.takeIf { it.size == 72 }?.let { record ->
                     // The native reader timestamps immediately after USBFS
@@ -146,6 +155,38 @@ internal class XrealXbxSession(
                     "IMU 样本保持协议解码后的 SI 数值，由姿态算法选择如何应用",
         )
         return calibration
+    }
+
+    // Official UI 0xd26334 / property 0x6f. Live USB: 36 MCU 0xe0 outs
+    // with float payload 0,2,...,70 C. Reply float3 is the 0x6f knot.
+    private fun readOfficial6fKnots(): List<TemperatureGyroscopeBias> {
+        val knots = ArrayList<TemperatureGyroscopeBias>(36)
+        for (temp in 0..70 step 2) {
+            val payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+                .putFloat(temp.toFloat()).array()
+            val reply = mcuCommand(0xe0, payload)
+            val bias = parseOfficial6fReply(reply)
+                ?: error(
+                    "MCU 0xe0 temp=$temp returned no gyro bias " +
+                        "(${reply.size} bytes ${reply.joinToString("") { "%02x".format(it) }})",
+                )
+            knots += TemperatureGyroscopeBias(temp.toFloat(), bias)
+        }
+        return knots
+    }
+
+    private fun parseOfficial6fReply(reply: ByteArray): FloatArray? {
+        // MCU body is 17 + payload. 0xe0 replies are 13 payload bytes:
+        // +22 status, +23..+34 float3, same layout as display-mode status
+        // at +22. Official 0x6f copies that float3.
+        if (reply.size < 35 || reply[0] != 0xfd.toByte()) return null
+        val command = (reply[15].toInt() and 0xff) or ((reply[16].toInt() and 0xff) shl 8)
+        if (command != 0xe0) return null
+        if ((reply[22].toInt() and 0xff) != 0) return null
+        val buffer = ByteBuffer.wrap(reply, 23, 12).order(ByteOrder.LITTLE_ENDIAN)
+        val bias = floatArrayOf(buffer.float, buffer.float, buffer.float)
+        if (bias.any { !it.isFinite() }) return null
+        return bias
     }
 
     private fun mcuCommand(command: Int, payload: ByteArray = byteArrayOf()): ByteArray {
