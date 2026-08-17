@@ -1,6 +1,7 @@
 #include "ar_glass.h"
 #include "dp_rpc_trace.h"
 #include "usb_trace.h"
+#include "xreal_usb_c_api.h"
 
 #include <jni.h>
 #include <android/log.h>
@@ -8,6 +9,8 @@
 #include <linux/usbdevice_fs.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
 
 #include <atomic>
 #include <algorithm>
@@ -15,10 +18,16 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <span>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <vector>
+#include <time.h>
 
 namespace {
 std::vector<std::uint8_t> to_vector(JNIEnv* env, jbyteArray input) {
@@ -32,6 +41,7 @@ jbyteArray to_array(JNIEnv* env, const std::vector<std::uint8_t>& bytes) {
     env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()), reinterpret_cast<const jbyte*>(bytes.data()));
     return result;
 }
+
 }  // namespace
 
 namespace {
@@ -64,6 +74,11 @@ public:
     std::vector<std::uint8_t> read_imu(JNIEnv*, int timeout) {
         return read(imu_in_, 64, timeout);
     }
+    void set_imu_sink(ar_glass_xreal_imu_sink sink, void* user) {
+        std::lock_guard lock(sink_mutex_);
+        imu_sink_ = sink;
+        imu_sink_user_ = user;
+    }
     bool start_imu_stream() {
         if (!imu_in_ || !running_ || imu_streaming_.exchange(true)) return false;
         imu_reader_ = std::thread([this] { read_imu_stream(); });
@@ -80,6 +95,7 @@ public:
         return result;
     }
     void close(JNIEnv*) {
+        set_imu_sink(nullptr, nullptr);
         if (!running_.exchange(false)) return;
         imu_streaming_.store(false);
         imu_queue_ready_.notify_all();
@@ -110,6 +126,8 @@ private:
         return static_cast<std::int64_t>(time.tv_sec) * 1'000'000'000LL + time.tv_nsec;
     }
     void read_imu_stream() {
+        prctl(PR_SET_NAME, "imu_cb", 0, 0, 0);
+        setpriority(PRIO_PROCESS, 0, -20);
         const auto submit = [this](ImuUrb& slot) {
             slot.urb = {};
             slot.urb.type = USBDEVFS_URB_TYPE_BULK;
@@ -146,26 +164,35 @@ private:
                 }
                 --active;
                 auto* slot = static_cast<ImuUrb*>(completed->usercontext);
+                // Official 0x145dce4 memcpy the 64-byte report, then pack
+                // and produce. Keep the URB in flight before produce so a
+                // 1 kHz completion does not stall the next 1 ms packet.
+                std::array<std::uint8_t, 72> record{};
+                bool have_record = false;
                 if (completed->status == 0
                         && completed->actual_length == static_cast<int>(slot->bytes.size())) {
                     const auto arrival = monotonic_time_nanos();
                     ar_glass::record_usb_transfer(
                             vid_, pid_, 1, imu_in_, 0, 0, 0,
                             completed->actual_length, slot->bytes.data(), slot->bytes.size());
-                    std::vector<std::uint8_t> record(8 + slot->bytes.size());
                     for (int byte = 0; byte < 8; ++byte)
                         record[byte] = static_cast<std::uint8_t>(arrival >> (byte * 8));
                     std::copy(slot->bytes.begin(), slot->bytes.end(), record.begin() + 8);
-                    {
-                        std::lock_guard lock(imu_queue_mutex_);
-                        // At 1 kHz this is 256 ms of headroom. Never stop
-                        // queueing USB requests because Java is temporarily slow.
-                        if (imu_queue_.size() == 256) imu_queue_.pop_front();
-                        imu_queue_.push_back(std::move(record));
-                    }
-                    imu_queue_ready_.notify_one();
+                    have_record = true;
                 }
                 if (running_ && imu_streaming_ && submit(*slot)) ++active;
+                if (!have_record) continue;
+                // Official USB completion is 0x145dce4 -> pack ->
+                // produce 0x1d4a39c on this thread. A registered sink
+                // is that produce. Do not also enqueue for Java; the
+                // 256-deep FIFO is up to 256 ms of stale IMU.
+                if (!invoke_imu_sink(record.data(),
+                        static_cast<int>(record.size()))) {
+                    std::lock_guard lock(imu_queue_mutex_);
+                    if (imu_queue_.size() == 256) imu_queue_.pop_front();
+                    imu_queue_.emplace_back(record.begin(), record.end());
+                    imu_queue_ready_.notify_one();
+                }
             }
         }
         imu_streaming_.store(false);
@@ -216,12 +243,22 @@ private:
         return {};
     }
 
+    bool invoke_imu_sink(const std::uint8_t* record, int size) {
+        std::lock_guard lock(sink_mutex_);
+        if (imu_sink_ == nullptr) return false;
+        imu_sink_(record, size, imu_sink_user_);
+        return true;
+    }
+
     libusb_context* context_ = nullptr;
     libusb_device_handle* handle_ = nullptr;
     int fd_;
     [[maybe_unused]] int vid_, pid_;
     int mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
     std::mutex command_mutex_;
+    std::mutex sink_mutex_;
+    ar_glass_xreal_imu_sink imu_sink_ = nullptr;
+    void* imu_sink_user_ = nullptr;
     std::atomic_bool running_{true};
     std::atomic_bool imu_streaming_{false};
     std::thread imu_reader_;
@@ -441,4 +478,64 @@ Java_com_taowen_arglass_NativeBridge_configureXrealOneDpDiagnostics(JNIEnv* env,
     const char* value = env->GetStringUTFChars(path, nullptr);
     ar_glass::configure_xreal_one_dp_trace(value);
     env->ReleaseStringUTFChars(path, value);
+}
+
+// Native USB owner used by the translation APK. IMU completion stays in
+// this process: 0x145dce4 analog -> pack -> produce, never Java.
+namespace {
+int copy_reply(const std::vector<std::uint8_t>& reply, uint8_t* out, int out_cap) {
+    if (out != nullptr && out_cap > 0 && !reply.empty()) {
+        const int n = std::min(out_cap, static_cast<int>(reply.size()));
+        std::memcpy(out, reply.data(), static_cast<std::size_t>(n));
+    }
+    return static_cast<int>(reply.size());
+}
+}  // namespace
+
+extern "C" JNIEXPORT void* ar_glass_xreal_usb_open(int fd, int vid, int pid,
+        int mcu_interface, int mcu_in, int mcu_out,
+        int imu_interface, int imu_in, int imu_out) {
+    try {
+        return new XrealUsbSession(fd, vid, pid, mcu_interface, mcu_in, mcu_out,
+                imu_interface, imu_in, imu_out);
+    } catch (const std::exception& error) {
+        __android_log_print(ANDROID_LOG_ERROR, "ArGlassNative", "%s", error.what());
+        return nullptr;
+    }
+}
+extern "C" JNIEXPORT void ar_glass_xreal_usb_close(void* session) {
+    if (session == nullptr) return;
+    auto* value = static_cast<XrealUsbSession*>(session);
+    value->close(nullptr);
+    delete value;
+}
+extern "C" JNIEXPORT int ar_glass_xreal_mcu(void* session, uint16_t command,
+        const uint8_t* payload, int payload_size, uint8_t* out, int out_cap) {
+    if (session == nullptr) return -1;
+    std::vector<std::uint8_t> in;
+    if (payload != nullptr && payload_size > 0) {
+        in.assign(payload, payload + payload_size);
+    }
+    return copy_reply(static_cast<XrealUsbSession*>(session)->mcu(nullptr, command, in),
+            out, out_cap);
+}
+extern "C" JNIEXPORT int ar_glass_xreal_imu(void* session, uint8_t command,
+        const uint8_t* payload, int payload_size, uint8_t* out, int out_cap) {
+    if (session == nullptr) return -1;
+    std::vector<std::uint8_t> in;
+    if (payload != nullptr && payload_size > 0) {
+        in.assign(payload, payload + payload_size);
+    }
+    return copy_reply(static_cast<XrealUsbSession*>(session)->imu(nullptr, command, in),
+            out, out_cap);
+}
+extern "C" JNIEXPORT void ar_glass_xreal_usb_set_imu_sink(void* session,
+        ar_glass_xreal_imu_sink sink, void* user) {
+    if (session != nullptr) {
+        static_cast<XrealUsbSession*>(session)->set_imu_sink(sink, user);
+    }
+}
+extern "C" JNIEXPORT int ar_glass_xreal_start_imu_stream(void* session) {
+    return session != nullptr &&
+            static_cast<XrealUsbSession*>(session)->start_imu_stream() ? 1 : 0;
 }
