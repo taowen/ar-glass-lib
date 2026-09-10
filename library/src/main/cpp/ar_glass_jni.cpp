@@ -61,11 +61,12 @@ public:
             throw std::runtime_error("Cannot claim XREAL IMU interface");
     }
 
-    std::vector<std::uint8_t> mcu(JNIEnv*, std::uint16_t command, std::span<const std::uint8_t> payload) {
+    std::vector<std::uint8_t> mcu(JNIEnv*, std::uint16_t command, std::span<const std::uint8_t> payload,
+                                int response_timeout_ms = 0) {
         std::lock_guard lock(command_mutex_);
         const auto request_id = next_mcu_request_id_++;
         return transact(mcu_out_, mcu_in_, ar_glass::make_mcu_command(command, request_id, payload),
-                        0xfd, command, -1);
+                        0xfd, command, -1, response_timeout_ms);
     }
     std::vector<std::uint8_t> imu(JNIEnv*, std::uint8_t command, std::span<const std::uint8_t> payload) {
         std::lock_guard lock(command_mutex_);
@@ -224,13 +225,24 @@ private:
         return result;
     }
     std::vector<std::uint8_t> transact(int out, int in,
-            const std::vector<std::uint8_t>& request, int magic, int command, int request_id) {
+            const std::vector<std::uint8_t>& request, int magic, int command, int request_id,
+            int response_timeout_ms = 0) {
         if (!out || !in || !running_) return {};
         const int written = transfer(out, const_cast<std::uint8_t*>(request.data()), request.size(), 750);
         if (written != static_cast<int>(request.size())) return {};
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(response_timeout_ms > 0 ? response_timeout_ms : 2000);
         while (running_ && std::chrono::steady_clock::now() < deadline) {
-            auto response = read(in, 64, 500);
+            int read_timeout_ms = 500;
+            if (response_timeout_ms > 0) {
+                const auto remaining = deadline - std::chrono::steady_clock::now();
+                if (remaining <= decltype(remaining)::zero()) break;
+                // usbdevfs accepts whole milliseconds; zero would mean an
+                // unbounded wait. Round up only the final fractional millisecond.
+                read_timeout_ms = static_cast<int>(std::min<std::int64_t>(500,
+                    std::chrono::ceil<std::chrono::milliseconds>(remaining).count()));
+            }
+            auto response = read(in, 64, read_timeout_ms);
             if (response.size() < 8 || response[0] != magic) continue;
             const int response_command = magic == 0xfd && response.size() >= 17
                 ? response[15] | response[16] << 8 : response[7];
@@ -518,6 +530,15 @@ extern "C" JNIEXPORT int ar_glass_xreal_mcu(void* session, uint16_t command,
     }
     return copy_reply(static_cast<XrealUsbSession*>(session)->mcu(nullptr, command, in),
             out, out_cap);
+}
+extern "C" JNIEXPORT int ar_glass_xreal_mcu_with_timeout(void* session, uint16_t command,
+        const uint8_t* payload, int payload_size, uint8_t* out, int out_cap,
+        int response_timeout_ms) {
+    if (session == nullptr || response_timeout_ms <= 0 || payload_size < 0 ||
+            (payload_size > 0 && payload == nullptr) || out == nullptr || out_cap <= 0) return -1;
+    const std::span<const std::uint8_t> input(payload, static_cast<std::size_t>(payload_size));
+    return copy_reply(static_cast<XrealUsbSession*>(session)->mcu(
+            nullptr, command, input, response_timeout_ms), out, out_cap);
 }
 extern "C" JNIEXPORT int ar_glass_xreal_imu(void* session, uint8_t command,
         const uint8_t* payload, int payload_size, uint8_t* out, int out_cap) {

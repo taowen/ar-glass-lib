@@ -17,6 +17,12 @@ void ar_glass_xreal_usb_close(void* session);
 int ar_glass_xreal_mcu(void* session, uint16_t command,
         const uint8_t* payload, int payload_size,
         uint8_t* out, int out_cap);
+// One exchange, without retries. The positive response timeout starts after
+// the request write completes; the existing write timeout remains 750 ms.
+// Returns reply length, zero on timeout/write failure, or -1 for invalid input.
+int ar_glass_xreal_mcu_with_timeout(void* session, uint16_t command,
+        const uint8_t* payload, int payload_size,
+        uint8_t* out, int out_cap, int response_timeout_ms);
 int ar_glass_xreal_imu(void* session, uint8_t command,
         const uint8_t* payload, int payload_size,
         uint8_t* out, int out_cap);
