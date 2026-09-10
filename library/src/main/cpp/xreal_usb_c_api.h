@@ -45,6 +45,15 @@ typedef void (*ar_glass_xreal_mcu_send_sink)(const uint8_t* packet, int size,
         int64_t send_time_ns, void* user);
 void ar_glass_xreal_usb_set_mcu_send_sink(void* session,
         ar_glass_xreal_mcu_send_sink sink, void* user);
+// A receive sink may publish a parsed response before calling its downstream
+// consumer, so the command waiter can resume independently of that consumer.
+// The normal receiver does this automatically after the sink returns if the
+// sink did not publish it. Only the pending CRC/command/request-ID match is
+// accepted; duplicate or unsolicited packets return zero without waking it.
+int ar_glass_xreal_publish_mcu_response(void* session,
+        const uint8_t* packet, int size);
+// Validate framing and CRC for either a response or an unsolicited MCU event.
+int ar_glass_xreal_validate_mcu_packet(const uint8_t* packet, int size);
 int ar_glass_xreal_start_mcu_stream(void* session);
 
 void ar_glass_xreal_usb_set_imu_sink(void* session,

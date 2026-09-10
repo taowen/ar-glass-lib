@@ -90,6 +90,15 @@ public:
         mcu_send_sink_ = sink;
         mcu_send_sink_user_ = user;
     }
+    bool publish_mcu_response(std::span<const std::uint8_t> response) {
+        std::lock_guard lock(mcu_reply_mutex_);
+        if (!mcu_pending_ || !ar_glass::matches_mcu_response(response,
+                mcu_pending_command_, mcu_pending_id_)) return false;
+        mcu_reply_.assign(response.begin(), response.end());
+        mcu_pending_ = false;
+        mcu_reply_ready_.notify_all();
+        return true;
+    }
     bool start_mcu_stream() {
         // Serialize the transition with synchronous MCU reads: after this
         // point only the receiver may read the MCU IN endpoint.
@@ -254,16 +263,7 @@ private:
                         "MCU receiver first packet bytes=%d receive_ns=%lld", size,
                         static_cast<long long>(received_ns));
             }
-            {
-                std::lock_guard lock(mcu_reply_mutex_);
-                const std::span<const std::uint8_t> response(packet.data(), size);
-                if (mcu_pending_ && ar_glass::matches_mcu_response(response,
-                        mcu_pending_command_, mcu_pending_id_)) {
-                    mcu_reply_.assign(response.begin(), response.end());
-                    mcu_pending_ = false;
-                }
-            }
-            mcu_reply_ready_.notify_all();
+            publish_mcu_response(std::span<const std::uint8_t>(packet.data(), size));
         }
         {
             std::lock_guard lock(mcu_reply_mutex_);
@@ -697,6 +697,22 @@ extern "C" JNIEXPORT void ar_glass_xreal_usb_set_mcu_sink(void* session,
 extern "C" JNIEXPORT void ar_glass_xreal_usb_set_mcu_send_sink(void* session,
         ar_glass_xreal_mcu_send_sink sink, void* user) {
     if (session) static_cast<XrealUsbSession*>(session)->set_mcu_send_sink(sink, user);
+}
+extern "C" JNIEXPORT int ar_glass_xreal_publish_mcu_response(void* session,
+        const std::uint8_t* packet, int size) {
+    if (!session || !packet || size <= 0) return 0;
+    return static_cast<XrealUsbSession*>(session)->publish_mcu_response(
+            std::span<const std::uint8_t>(packet, size)) ? 1 : 0;
+}
+extern "C" JNIEXPORT int ar_glass_xreal_validate_mcu_packet(
+        const std::uint8_t* packet, int size) {
+    if (!packet || size < 22) return 0;
+    const auto message_id = static_cast<std::uint16_t>(packet[15] | packet[16] << 8);
+    std::uint32_t request_id = 0;
+    for (unsigned i = 0; i < 4; ++i)
+        request_id |= static_cast<std::uint32_t>(packet[7 + i]) << (i * 8);
+    return ar_glass::matches_mcu_response(
+            std::span<const std::uint8_t>(packet, size), message_id, request_id) ? 1 : 0;
 }
 extern "C" JNIEXPORT int ar_glass_xreal_start_mcu_stream(void* session) {
     if (!session) return 0;
