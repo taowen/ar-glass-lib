@@ -27,6 +27,17 @@ int ar_glass_xreal_mcu_with_timeout(void* session, uint16_t command,
 int ar_glass_xreal_imu(void* session, uint8_t command,
         const uint8_t* payload, int payload_size,
         uint8_t* out, int out_cap);
+// Optional continuous MCU reception. The sink runs on the native USB reader,
+// with CLOCK_MONOTONIC nanoseconds sampled at transfer completion. Positive
+// sizes carry raw packets; negative sizes report transport errors. The sink
+// must not issue a synchronous command on this session. Clearing the sink
+// waits for an in-flight callback; close joins the reader before releasing USB.
+typedef void (*ar_glass_xreal_mcu_sink)(const uint8_t* packet, int size,
+        int64_t receive_time_ns, void* user);
+void ar_glass_xreal_usb_set_mcu_sink(void* session,
+        ar_glass_xreal_mcu_sink sink, void* user);
+int ar_glass_xreal_start_mcu_stream(void* session);
+
 void ar_glass_xreal_usb_set_imu_sink(void* session,
         ar_glass_xreal_imu_sink sink, void* user);
 int ar_glass_xreal_start_imu_stream(void* session);

@@ -80,6 +80,27 @@ public:
         imu_sink_ = sink;
         imu_sink_user_ = user;
     }
+    void set_mcu_sink(ar_glass_xreal_mcu_sink sink, void* user) {
+        std::lock_guard lock(mcu_sink_mutex_);
+        mcu_sink_ = sink;
+        mcu_sink_user_ = user;
+    }
+    bool start_mcu_stream() {
+        // Serialize the transition with synchronous MCU reads: after this
+        // point only the receiver may read the MCU IN endpoint.
+        std::lock_guard lock(command_mutex_);
+        if (!mcu_in_ || !running_ || mcu_streaming_) return false;
+        if (mcu_reader_.joinable()) mcu_reader_.join();
+        mcu_streaming_ = true;
+        try {
+            mcu_reader_ = std::thread([this] { read_mcu_stream(); });
+            mcu_async_enabled_ = true;
+        } catch (...) {
+            mcu_streaming_ = false;
+            throw;
+        }
+        return true;
+    }
     bool start_imu_stream() {
         if (!imu_in_ || !running_ || imu_streaming_.exchange(true)) return false;
         imu_reader_ = std::thread([this] { read_imu_stream(); });
@@ -97,12 +118,19 @@ public:
     }
     void close(JNIEnv*) {
         set_imu_sink(nullptr, nullptr);
-        if (!running_.exchange(false)) return;
+        set_mcu_sink(nullptr, nullptr);
+        {
+            std::lock_guard lock(mcu_reply_mutex_);
+            if (!running_.exchange(false)) return;
+        }
+        mcu_reply_ready_.notify_all();
+        if (mcu_reader_.joinable()) mcu_reader_.join();
         imu_streaming_.store(false);
         imu_queue_ready_.notify_all();
         for (auto& slot : imu_urbs_)
             ioctl(fd_, USBDEVFS_DISCARDURB, &slot.urb);
         if (imu_reader_.joinable()) imu_reader_.join();
+        std::lock_guard command_lock(command_mutex_);
         if (imu_interface_ >= 0) libusb_release_interface(handle_, imu_interface_);
         if (mcu_interface_ >= 0) libusb_release_interface(handle_, mcu_interface_);
         if (handle_) libusb_close(handle_);
@@ -123,7 +151,7 @@ private:
     };
     static std::int64_t monotonic_time_nanos() {
         timespec time{};
-        clock_gettime(CLOCK_MONOTONIC, &time);
+        if (clock_gettime(CLOCK_MONOTONIC, &time) != 0) return 0;
         return static_cast<std::int64_t>(time.tv_sec) * 1'000'000'000LL + time.tv_nsec;
     }
     void read_imu_stream() {
@@ -199,7 +227,46 @@ private:
         imu_streaming_.store(false);
         imu_queue_ready_.notify_all();
     }
-    int transfer(int endpoint, std::uint8_t* bytes, int size, int timeout) {
+    void read_mcu_stream() {
+        prctl(PR_SET_NAME, "mcu_cb", 0, 0, 0);
+        bool received_first_packet = false;
+        while (running_) {
+            std::array<std::uint8_t, 64> packet{};
+            std::int64_t received_ns = 0;
+            const int size = transfer(mcu_in_, packet.data(), packet.size(), 100,
+                    &received_ns);
+            if (!running_) break;
+            if (size == -ETIMEDOUT || size == -EINTR || size == 0) continue;
+            {
+                std::lock_guard lock(mcu_sink_mutex_);
+                if (mcu_sink_) mcu_sink_(packet.data(), size, received_ns, mcu_sink_user_);
+            }
+            if (size < 0) break;
+            if (!received_first_packet) {
+                received_first_packet = true;
+                __android_log_print(ANDROID_LOG_INFO, "ArGlassNative",
+                        "MCU receiver first packet bytes=%d receive_ns=%lld", size,
+                        static_cast<long long>(received_ns));
+            }
+            {
+                std::lock_guard lock(mcu_reply_mutex_);
+                const std::span<const std::uint8_t> response(packet.data(), size);
+                if (mcu_pending_ && ar_glass::matches_mcu_response(response,
+                        mcu_pending_command_, mcu_pending_id_)) {
+                    mcu_reply_.assign(response.begin(), response.end());
+                    mcu_pending_ = false;
+                }
+            }
+            mcu_reply_ready_.notify_all();
+        }
+        {
+            std::lock_guard lock(mcu_reply_mutex_);
+            mcu_streaming_ = false;
+        }
+        mcu_reply_ready_.notify_all();
+    }
+    int transfer(int endpoint, std::uint8_t* bytes, int size, int timeout,
+                 std::int64_t* completion_ns = nullptr) {
         usbdevfs_bulktransfer request{};
         request.ep = static_cast<unsigned int>(endpoint);
         request.len = static_cast<unsigned int>(size);
@@ -207,6 +274,7 @@ private:
         request.data = bytes;
         const int result = ioctl(fd_, USBDEVFS_BULK, &request);
         const int returned = result >= 0 ? result : -errno;
+        if (completion_ns) *completion_ns = monotonic_time_nanos();
         const bool input = (endpoint & LIBUSB_ENDPOINT_DIR_MASK) != 0;
         ar_glass::record_usb_transfer(vid_, pid_, input ? 1 : 2, endpoint, 0, 0, 0, returned,
             bytes, input ? static_cast<std::size_t>(std::max(result, 0)) : static_cast<std::size_t>(size));
@@ -228,6 +296,29 @@ private:
             const std::vector<std::uint8_t>& request, int magic, int command, int request_id,
             int response_timeout_ms = 0) {
         if (!out || !in || !running_) return {};
+        if (magic == 0xfd && mcu_async_enabled_) {
+            if (!mcu_streaming_) return {};
+            // command_mutex_ is held by mcu(). Install the expected reply
+            // before writing, so a fast response cannot be lost.
+            std::unique_lock lock(mcu_reply_mutex_);
+            mcu_reply_.clear();
+            mcu_pending_command_ = static_cast<std::uint16_t>(command);
+            std::memcpy(&mcu_pending_id_, request.data() + 7, sizeof(mcu_pending_id_));
+            mcu_pending_ = true;
+            lock.unlock();
+            const int written = transfer(out, const_cast<std::uint8_t*>(request.data()),
+                    request.size(), 750);
+            lock.lock();
+            if (written == static_cast<int>(request.size())) {
+                mcu_reply_ready_.wait_for(lock,
+                        std::chrono::milliseconds(response_timeout_ms > 0 ? response_timeout_ms : 2000),
+                        [this] { return !mcu_pending_ || !running_ || !mcu_streaming_; });
+            } else {
+                mcu_reply_.clear();
+            }
+            mcu_pending_ = false;
+            return std::move(mcu_reply_);
+        }
         const int written = transfer(out, const_cast<std::uint8_t*>(request.data()), request.size(), 750);
         if (written != static_cast<int>(request.size())) return {};
         const auto deadline = std::chrono::steady_clock::now() +
@@ -275,6 +366,18 @@ private:
     [[maybe_unused]] int vid_, pid_;
     int mcu_interface_, mcu_in_, mcu_out_, imu_interface_, imu_in_, imu_out_;
     std::mutex command_mutex_;
+    std::mutex mcu_sink_mutex_;
+    ar_glass_xreal_mcu_sink mcu_sink_ = nullptr;
+    void* mcu_sink_user_ = nullptr;
+    std::atomic_bool mcu_streaming_{false};
+    bool mcu_async_enabled_ = false; // guarded by command_mutex_
+    std::thread mcu_reader_;
+    std::mutex mcu_reply_mutex_;
+    std::condition_variable mcu_reply_ready_;
+    bool mcu_pending_ = false;
+    std::uint16_t mcu_pending_command_ = 0;
+    std::uint32_t mcu_pending_id_ = 0;
+    std::vector<std::uint8_t> mcu_reply_;
     std::mutex sink_mutex_;
     ar_glass_xreal_imu_sink imu_sink_ = nullptr;
     void* imu_sink_user_ = nullptr;
@@ -566,4 +669,18 @@ extern "C" JNIEXPORT void ar_glass_xreal_usb_set_imu_sink(void* session,
 extern "C" JNIEXPORT int ar_glass_xreal_start_imu_stream(void* session) {
     return session != nullptr &&
             static_cast<XrealUsbSession*>(session)->start_imu_stream() ? 1 : 0;
+}
+
+extern "C" JNIEXPORT void ar_glass_xreal_usb_set_mcu_sink(void* session,
+        ar_glass_xreal_mcu_sink sink, void* user) {
+    if (session) static_cast<XrealUsbSession*>(session)->set_mcu_sink(sink, user);
+}
+extern "C" JNIEXPORT int ar_glass_xreal_start_mcu_stream(void* session) {
+    if (!session) return 0;
+    try {
+        return static_cast<XrealUsbSession*>(session)->start_mcu_stream() ? 1 : 0;
+    } catch (const std::exception& error) {
+        __android_log_print(ANDROID_LOG_ERROR, "ArGlassNative", "%s", error.what());
+        return 0;
+    }
 }
