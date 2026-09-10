@@ -85,6 +85,11 @@ public:
         mcu_sink_ = sink;
         mcu_sink_user_ = user;
     }
+    void set_mcu_send_sink(ar_glass_xreal_mcu_send_sink sink, void* user) {
+        std::lock_guard lock(mcu_send_sink_mutex_);
+        mcu_send_sink_ = sink;
+        mcu_send_sink_user_ = user;
+    }
     bool start_mcu_stream() {
         // Serialize the transition with synchronous MCU reads: after this
         // point only the receiver may read the MCU IN endpoint.
@@ -119,6 +124,7 @@ public:
     void close(JNIEnv*) {
         set_imu_sink(nullptr, nullptr);
         set_mcu_sink(nullptr, nullptr);
+        set_mcu_send_sink(nullptr, nullptr);
         {
             std::lock_guard lock(mcu_reply_mutex_);
             if (!running_.exchange(false)) return;
@@ -306,6 +312,7 @@ private:
             std::memcpy(&mcu_pending_id_, request.data() + 7, sizeof(mcu_pending_id_));
             mcu_pending_ = true;
             lock.unlock();
+            notify_mcu_send(request);
             const int written = transfer(out, const_cast<std::uint8_t*>(request.data()),
                     request.size(), 750);
             lock.lock();
@@ -319,6 +326,7 @@ private:
             mcu_pending_ = false;
             return std::move(mcu_reply_);
         }
+        if (magic == 0xfd) notify_mcu_send(request);
         const int written = transfer(out, const_cast<std::uint8_t*>(request.data()), request.size(), 750);
         if (written != static_cast<int>(request.size())) return {};
         const auto deadline = std::chrono::steady_clock::now() +
@@ -359,6 +367,14 @@ private:
         imu_sink_(record, size, imu_sink_user_);
         return true;
     }
+    void notify_mcu_send(const std::vector<std::uint8_t>& request) {
+        std::lock_guard lock(mcu_send_sink_mutex_);
+        if (mcu_send_sink_) {
+            const auto send_ns = monotonic_time_nanos();
+            mcu_send_sink_(request.data(), static_cast<int>(request.size()),
+                    send_ns, mcu_send_sink_user_);
+        }
+    }
 
     libusb_context* context_ = nullptr;
     libusb_device_handle* handle_ = nullptr;
@@ -369,6 +385,9 @@ private:
     std::mutex mcu_sink_mutex_;
     ar_glass_xreal_mcu_sink mcu_sink_ = nullptr;
     void* mcu_sink_user_ = nullptr;
+    std::mutex mcu_send_sink_mutex_;
+    ar_glass_xreal_mcu_send_sink mcu_send_sink_ = nullptr;
+    void* mcu_send_sink_user_ = nullptr;
     std::atomic_bool mcu_streaming_{false};
     bool mcu_async_enabled_ = false; // guarded by command_mutex_
     std::thread mcu_reader_;
@@ -674,6 +693,10 @@ extern "C" JNIEXPORT int ar_glass_xreal_start_imu_stream(void* session) {
 extern "C" JNIEXPORT void ar_glass_xreal_usb_set_mcu_sink(void* session,
         ar_glass_xreal_mcu_sink sink, void* user) {
     if (session) static_cast<XrealUsbSession*>(session)->set_mcu_sink(sink, user);
+}
+extern "C" JNIEXPORT void ar_glass_xreal_usb_set_mcu_send_sink(void* session,
+        ar_glass_xreal_mcu_send_sink sink, void* user) {
+    if (session) static_cast<XrealUsbSession*>(session)->set_mcu_send_sink(sink, user);
 }
 extern "C" JNIEXPORT int ar_glass_xreal_start_mcu_stream(void* session) {
     if (!session) return 0;

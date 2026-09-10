@@ -36,6 +36,15 @@ typedef void (*ar_glass_xreal_mcu_sink)(const uint8_t* packet, int size,
         int64_t receive_time_ns, void* user);
 void ar_glass_xreal_usb_set_mcu_sink(void* session,
         ar_glass_xreal_mcu_sink sink, void* user);
+// Runs on the command caller after serialization and packet construction,
+// immediately before submitting the MCU write. This is a separate clock sample
+// from any timestamp carried in the request payload. It also observes failed
+// write attempts. Do not issue commands or change sinks inside this callback.
+// Clearing the sink waits for an in-flight callback.
+typedef void (*ar_glass_xreal_mcu_send_sink)(const uint8_t* packet, int size,
+        int64_t send_time_ns, void* user);
+void ar_glass_xreal_usb_set_mcu_send_sink(void* session,
+        ar_glass_xreal_mcu_send_sink sink, void* user);
 int ar_glass_xreal_start_mcu_stream(void* session);
 
 void ar_glass_xreal_usb_set_imu_sink(void* session,
