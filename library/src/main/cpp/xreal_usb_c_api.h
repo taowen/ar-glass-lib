@@ -19,6 +19,7 @@ int ar_glass_xreal_mcu(void* session, uint16_t command,
         uint8_t* out, int out_cap);
 // One exchange, without retries. The positive response timeout starts after
 // the request write completes; the existing write timeout remains 750 ms.
+// Only CRC-valid replies with the same command and request ID are returned.
 // Returns reply length, zero on timeout/write failure, or -1 for invalid input.
 int ar_glass_xreal_mcu_with_timeout(void* session, uint16_t command,
         const uint8_t* payload, int payload_size,

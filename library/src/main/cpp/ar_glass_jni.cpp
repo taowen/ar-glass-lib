@@ -243,6 +243,13 @@ private:
                     std::chrono::ceil<std::chrono::milliseconds>(remaining).count()));
             }
             auto response = read(in, 64, read_timeout_ms);
+            if (response_timeout_ms > 0 && magic == 0xfd) {
+                std::uint32_t expected_id;
+                std::memcpy(&expected_id, request.data() + 7, sizeof(expected_id));
+                if (ar_glass::matches_mcu_response(response,
+                        static_cast<std::uint16_t>(command), expected_id)) return response;
+                continue;
+            }
             if (response.size() < 8 || response[0] != magic) continue;
             const int response_command = magic == 0xfd && response.size() >= 17
                 ? response[15] | response[16] << 8 : response[7];

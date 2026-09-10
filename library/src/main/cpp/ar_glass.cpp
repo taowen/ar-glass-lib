@@ -62,6 +62,16 @@ std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::uint32_t 
     return packet;
 }
 
+bool matches_mcu_response(std::span<const std::uint8_t> packet,
+                          std::uint16_t command, std::uint32_t request_id) {
+    if (packet.size() < 22 || packet[0] != 0xfd) return false;
+    const auto body_length = read_le<std::uint16_t>(packet, 5);
+    if (body_length < 17 || static_cast<std::size_t>(body_length) + 5 > packet.size()) return false;
+    return read_le<std::uint16_t>(packet, 15) == command &&
+        read_le<std::uint32_t>(packet, 7) == request_id &&
+        read_le<std::uint32_t>(packet, 1) == crc32(packet.subspan(5, body_length));
+}
+
 bool decode_xreal_imu(std::span<const std::uint8_t> b, ImuSample& out) {
     if (b.size() < 64 || b[0] != 1 || (b[1] != 1 && b[1] != 2)) return false;
     out = {};

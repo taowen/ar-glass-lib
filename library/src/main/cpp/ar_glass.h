@@ -27,6 +27,8 @@ enum class GoovisModelKind : std::uint8_t {
 std::vector<std::uint8_t> make_imu_command(std::uint8_t command, std::span<const std::uint8_t> payload = {});
 std::vector<std::uint8_t> make_mcu_command(std::uint16_t command, std::uint32_t request_id,
                                            std::span<const std::uint8_t> payload = {});
+bool matches_mcu_response(std::span<const std::uint8_t> packet,
+                          std::uint16_t command, std::uint32_t request_id);
 bool decode_xreal_imu(std::span<const std::uint8_t> report, ImuSample& result);
 std::array<std::uint8_t, 24> make_goovis_command(std::uint8_t group, std::uint8_t value);
 bool decode_goovis_imu(std::span<const std::uint8_t> report, GoovisModelKind model,
