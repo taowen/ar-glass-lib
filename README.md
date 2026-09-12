@@ -143,19 +143,39 @@ For module-only builds:
 
 ## Android API
 
+Use a serial executor for device commands and callbacks. Opening USB, querying
+MCU properties and closing a session can block; keep them off the UI thread.
+Serialize closing the old session before opening its replacement, including
+when Android replaces an Activity.
+
 ```kotlin
-val manager = ArGlassesManager(context, context.mainExecutor, listener)
+val deviceIo = Executors.newSingleThreadExecutor()
+val manager = ArGlassesManager(context, deviceIo, managerListener)
 val connected = manager.scan().firstOrNull() ?: return
-if (!manager.hasPermission(connected.device)) manager.requestPermission(connected.device)
-val session = manager.open(connected.device)
-val in3d = session.isIn3d()
-session.switchTo3d()
-session.switchTo2d()
-val profile = connected.model.supportedDisplayProfiles.firstOrNull {
-    it.width == 1920 && it.height == 1080 && it.refreshRateHz == 120
+if (!manager.hasPermission(connected)) {
+    manager.requestPermission(connected)
+    // Resume opening from onPermissionResult after a grant.
+    return
 }
-if (profile != null) session.setDisplayProfile(profile)
+deviceIo.execute {
+    val session = manager.open(connected, SessionFeature.ALL, sessionListener)
+    val profile = session.queryDisplayProfile()
+    // Retain the session and close it on deviceIo when the owner stops.
+}
 ```
+
+The optional `sessionListener` receives this connection's IMU, calibration and
+status events; device discovery and permission results remain with the manager
+listener. Omitting it preserves the manager-listener API. Calibration state is
+local to a session. `ArGlassesSession.close()` is idempotent and invalidates queued
+driver callbacks before closing the transport; an already executing callback may
+finish, so use the same serial executor for connection lifetime and callback state.
+
+`open()` returns a session handle while some drivers are still initializing.
+Wait for `onImuCalibration` before consuming factory display geometry through
+`queryCenterTangentFov()`. A null result means that this driver's session does not
+currently provide that geometry; it is not a generic/default field of view.
+
 
 `ArGlassesListener.onImuSample` receives the same interface for every model:
 acceleration in m/s², angular velocity in rad/s, an optional magnetic vector in µT,

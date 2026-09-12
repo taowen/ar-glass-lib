@@ -16,6 +16,7 @@ import com.taowen.arglass.driver.CompositeGlassesDriver
 import com.taowen.arglass.driver.GlassesDriverRegistry
 import com.taowen.arglass.driver.rayneo.RayneoMagneticCalibrationStore
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executor
 
 data class ConnectedGlasses(
@@ -47,14 +48,15 @@ class ArGlassesManager(
     private var pendingPermission: UsbDevice? = null
     private var pendingGlasses: ConnectedGlasses? = null
     private var session: ArGlassesSession? = null
-    @Volatile private var latestImuCalibration: ImuCalibrationData? = null
-    private val diagnosticListener = object : ArGlassesListener {
+    private val diagnosticListener = diagnostics(listener)
+    private fun diagnostics(target: ArGlassesListener) = object : ArGlassesListener {
+        @Volatile private var latestImuCalibration: ImuCalibrationData? = null
         override fun onDevicesChanged(devices: List<ConnectedGlasses>) {
             ArGlassesDiagnostics.recordEvent(
                 "devices changed count=${devices.size} " +
                     devices.joinToString { "0x%04x:0x%04x:%s".format(it.device.vendorId, it.device.productId, it.model.id) },
             )
-            listener.onDevicesChanged(devices)
+            target.onDevicesChanged(devices)
         }
 
         override fun onPermissionResult(device: ConnectedGlasses, granted: Boolean) {
@@ -64,12 +66,12 @@ class ArGlassesManager(
                     device.device.productId,
                 ),
             )
-            listener.onPermissionResult(device, granted)
+            target.onPermissionResult(device, granted)
         }
 
         override fun onStatus(message: String) {
             ArGlassesDiagnostics.recordEvent("status $message")
-            listener.onStatus(message)
+            target.onStatus(message)
         }
 
         override fun onImuCalibration(calibration: ImuCalibrationData) {
@@ -78,7 +80,7 @@ class ArGlassesManager(
                 "imu calibration source=${calibration.source} state=${calibration.state} " +
                     "temperaturePoints=${calibration.gyroscopeTemperatureBiases.size}",
             )
-            listener.onImuCalibration(calibration)
+            target.onImuCalibration(calibration)
         }
 
         override fun onImuHostCalibrationProgress(progress: ImuHostCalibrationProgress) {
@@ -87,12 +89,12 @@ class ArGlassesManager(
                     "${progress.requiredSamples} coverage=${progress.orientationCoverage} " +
                     "disturbed=${progress.rejectedDisturbanceSamples}",
             )
-            listener.onImuHostCalibrationProgress(progress)
+            target.onImuHostCalibrationProgress(progress)
         }
 
         override fun onImuSample(sample: ImuSample) {
             val state = latestImuCalibration?.state ?: sample.calibration
-            listener.onImuSample(if (sample.calibration == state) sample else sample.copy(calibration = state))
+            target.onImuSample(if (sample.calibration == state) sample else sample.copy(calibration = state))
         }
     }
     private val receiver = object : BroadcastReceiver() {
@@ -160,32 +162,51 @@ class ArGlassesManager(
         usbManager.requestPermission(device, pendingIntent)
     }
 
-    fun open(device: UsbDevice, feature: SessionFeature = SessionFeature.ALL): ArGlassesSession {
+    /** Open/close and device commands must be serialized by the caller.
+     * IMU callbacks belong to this session and queued callbacks are discarded on close.
+     * A session listener can keep per-connection state without sharing manager events.
+     */
+    @JvmOverloads
+    fun open(device: UsbDevice, feature: SessionFeature = SessionFeature.ALL,
+             sessionListener: ArGlassesListener = listener): ArGlassesSession {
         require(usbManager.hasPermission(device)) { "USB permission has not been granted" }
         val model = requireNotNull(ArGlassesCatalog.identify(device)) { "Unsupported AR glasses" }
         ArGlassesDiagnostics.recordEvent(
             "open session model=${model.id} feature=$feature vid=0x%04x pid=0x%04x".format(device.vendorId, device.productId),
         )
         session?.close()
-        latestImuCalibration = null
         val driver = GlassesDriverRegistry.driver(model)
         val devices = listOf(device) + if (driver is CompositeGlassesDriver)
             driver.companionDevices(usbManager.deviceList.values, device) else emptyList()
         require(devices.all(usbManager::hasPermission)) { "USB permission has not been granted for every glasses component" }
-        val driverSession = if (driver is CompositeGlassesDriver)
-            driver.openComposite(connectivityManager, usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, executor, diagnosticListener)
-        else driver.open(connectivityManager, usbManager, device, model, feature, executor, diagnosticListener)
-        return ArGlassesSession(device, driverSession.resolvedModel ?: model, driverSession).also { session = it }
+        val active = AtomicBoolean(true)
+        val callbackExecutor = Executor { command ->
+            if (active.get()) executor.execute { if (active.get()) command.run() }
+        }
+        val callbacks = diagnostics(sessionListener)
+        try {
+            val driverSession = if (driver is CompositeGlassesDriver)
+                driver.openComposite(connectivityManager, usbManager, devices.distinctBy(UsbDevice::getDeviceId), model, feature, callbackExecutor, callbacks)
+            else driver.open(connectivityManager, usbManager, device, model, feature, callbackExecutor, callbacks)
+            return ArGlassesSession(device, driverSession.resolvedModel ?: model, driverSession) {
+                active.set(false)
+            }.also { session = it }
+        } catch (error: Throwable) {
+            active.set(false)
+            throw error
+        }
     }
 
-    fun open(glasses: ConnectedGlasses, feature: SessionFeature = SessionFeature.ALL): ArGlassesSession {
+    @JvmOverloads
+    fun open(glasses: ConnectedGlasses, feature: SessionFeature = SessionFeature.ALL,
+             sessionListener: ArGlassesListener = listener): ArGlassesSession {
         require(glasses.devices.all(usbManager::hasPermission)) {
             "USB permission has not been granted for every glasses component"
         }
         require(ArGlassesCatalog.identify(glasses.device)?.id == glasses.model.id) {
             "Connected glasses changed before the session was opened"
         }
-        return open(glasses.device, feature)
+        return open(glasses.device, feature, sessionListener)
     }
 
     fun externalDisplayResolutions(): List<DisplayResolution> =
@@ -213,7 +234,9 @@ class ArGlassesSession internal constructor(
     val device: UsbDevice,
     val model: GlassesModel,
     private val delegate: DriverSession,
+    private val invalidateCallbacks: () -> Unit,
 ) : Closeable {
+    private val closed = AtomicBoolean(false)
     fun queryCenterTangentFov(): GlassesTangentFov? =
         delegate.queryCenterTangentFov().also {
             ArGlassesDiagnostics.recordEvent(
@@ -277,6 +300,8 @@ class ArGlassesSession internal constructor(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        invalidateCallbacks()
         ArGlassesDiagnostics.recordEvent("close session model=${model.id}")
         delegate.close()
     }
