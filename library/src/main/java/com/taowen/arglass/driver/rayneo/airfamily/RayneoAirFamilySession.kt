@@ -406,6 +406,11 @@ internal class RayneoAirFamilySession(
         val hasMagnetometer = magnetometerAvailable == true
         return model.copy(
             model = detectedModel,
+            // Air4 capture established a dominant 2,000,000 ns device interval.
+            // Do not extend that observation to every board sharing this USB PID.
+            imuInputContract = com.taowen.arglass.ImuInputContract(
+                com.taowen.arglass.ImuInputEncoding.RUNTIME_SI,
+                nominalSamplePeriodNanos = if (detectedModel == "Air 4") 2_000_000L else null),
             capabilities = model.capabilities + GlassesCapability.IMU,
             imuTrackingSupport = ImuTrackingSupport(
                 axisCount = if (hasMagnetometer) 9 else 6,

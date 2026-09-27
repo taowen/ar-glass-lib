@@ -137,6 +137,8 @@ data class GlassesModel(
         supportedDisplayProfiles.firstOrNull { it.is3d },
     val showInArctrlDisplayModeToggle: Boolean = GlassesCapability.DISPLAY_MODE in capabilities,
     val imuTrackingSupport: ImuTrackingSupport? = null,
+    /** Null means the driver has not declared a reviewed host input contract. */
+    val imuInputContract: ImuInputContract? = null,
 ) {
     val displayName: String get() = "$manufacturer $model"
 

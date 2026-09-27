@@ -80,6 +80,8 @@ internal interface DriverSession : Closeable {
     /** More precise model information learned only after a permission-gated protocol probe. */
     val resolvedModel: GlassesModel? get() = null
     fun resetHostImuCalibration(): Boolean = false
+    /** Snapshot only: never sends a command; null until a supported query completes. */
+    fun queryImuProtocolResponse(): com.taowen.arglass.ImuProtocolResponse? = null
     fun queryCenterTangentFov(): com.taowen.arglass.GlassesTangentFov? = null
     fun queryDisplayProfile(): GlassesDisplayProfile? = null
     fun setDisplayProfile(profile: GlassesDisplayProfile): Boolean =

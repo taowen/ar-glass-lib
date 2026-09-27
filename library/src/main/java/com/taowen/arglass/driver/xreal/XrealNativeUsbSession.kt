@@ -3,6 +3,7 @@ package com.taowen.arglass.driver.xreal
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import com.taowen.arglass.NativeBridge
+import com.taowen.arglass.ImuProtocolResponse
 import com.taowen.arglass.driver.inputEndpoint
 import com.taowen.arglass.driver.interfaceById
 import com.taowen.arglass.driver.outputEndpoint
@@ -41,8 +42,19 @@ internal class XrealNativeUsbSession(
     fun setMcuDisplayModeValue(modeValue: Int, payloadBytes: Int): Boolean =
         NativeBridge.xrealMcuSetDisplayModeValue(handle, modeValue, payloadBytes)
 
-    fun imu(command: Int, payload: ByteArray = byteArrayOf()): ByteArray =
-        NativeBridge.xrealImuCommand(handle, command, payload)
+    @Volatile var imuProtocolResponse: ImuProtocolResponse? = null
+        private set
+
+    fun imu(command: Int, payload: ByteArray = byteArrayOf()): ByteArray {
+        val response = NativeBridge.xrealImuCommand(handle, command, payload)
+        // Retain the complete matched AA response returned by transact(), including
+        // its header. Do not infer an identifier from USB PID or strip a presumed
+        // model-specific header here. This adds no USB command or success fallback.
+        if (command == 0x1a && payload.isEmpty()) {
+            imuProtocolResponse = ImuProtocolResponse("xreal.imu-aa-response", command, response)
+        }
+        return response
+    }
 
     fun readImu(timeoutMs: Int = 750): ByteArray? = NativeBridge.xrealReadImu(handle, timeoutMs)
 

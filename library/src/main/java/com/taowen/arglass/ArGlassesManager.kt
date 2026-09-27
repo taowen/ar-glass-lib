@@ -238,6 +238,8 @@ class ArGlassesSession internal constructor(
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     internal fun requestMonoLayout(): Boolean = delegate.requestMonoLayout()
+    /** Latest completed query, without performing USB I/O or decoding vendor fields. */
+    fun queryImuProtocolResponse(): ImuProtocolResponse? = delegate.queryImuProtocolResponse()
     fun queryCenterTangentFov(): GlassesTangentFov? =
         delegate.queryCenterTangentFov().also {
             ArGlassesDiagnostics.recordEvent(

@@ -23,6 +23,9 @@ class PhoneAtwSession private constructor(
 ) : Closeable {
     private val closed = AtomicBoolean()
 
+    /** Read after startup as needed: some drivers publish calibration before the query. */
+    fun queryImuProtocolResponse(): ImuProtocolResponse? = session.queryImuProtocolResponse()
+
     /** Call only after the renderer has consumed calibration and initialized. */
     fun startSamples() {
         check(!closed.get())
@@ -87,7 +90,8 @@ class PhoneAtwSession private constructor(
                 check(ready.await(20, TimeUnit.SECONDS)) { "Device calibration not received within 20 seconds" }
                 val snapshot = requireNotNull(receivedCalibration.get())
                 return PhoneAtwSession(manager, session,
-                    PhoneAtwConfiguration(model, profile, snapshot, session.queryCenterTangentFov()), accepting, firstSample)
+                    PhoneAtwConfiguration(model, profile, snapshot, session.queryCenterTangentFov(),
+                        session.queryImuProtocolResponse()), accepting, firstSample)
             } catch (error: Throwable) {
                 accepting.set(false)
                 manager.close()
@@ -104,6 +108,8 @@ data class PhoneAtwConfiguration(
     val display: GlassesDisplayProfile?,
     val imuCalibration: ImuCalibrationData,
     val centerFov: GlassesTangentFov?,
+    /** Startup observation, not an inferred ID. May be null if the driver query is still pending. */
+    val imuProtocolResponse: ImuProtocolResponse? = null,
 )
 
 interface PhoneAtwSink {

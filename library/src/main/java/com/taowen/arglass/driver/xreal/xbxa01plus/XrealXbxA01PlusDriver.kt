@@ -33,6 +33,8 @@ internal object XrealXbxA01PlusDriver : GlassesDriver {
             },
             showInArctrlDisplayModeToggle = true,
             imuTrackingSupport = ImuTrackingSupport(9, XrealXbxCalibration.FACTORY_CALIBRATION),
+            imuInputContract = com.taowen.arglass.ImuInputContract(
+                com.taowen.arglass.ImuInputEncoding.XREAL_USB_REPORT, xrealDeviceKind = 7),
         ) else null
 
     override fun open(usbManager: UsbManager, device: UsbDevice, model: GlassesModel, feature: SessionFeature,

@@ -54,6 +54,8 @@ internal class XrealAir2UltraSession(
 
     init { worker?.start() }
 
+    override fun queryImuProtocolResponse() = usb.imuProtocolResponse
+
     @Synchronized
     override fun queryDisplayProfile(): GlassesDisplayProfile? {
         check(displayModeEnabled) { "This session was not opened for display-mode control" }

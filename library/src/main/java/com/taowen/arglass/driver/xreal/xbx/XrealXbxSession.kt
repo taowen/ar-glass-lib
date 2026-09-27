@@ -40,6 +40,8 @@ internal class XrealXbxSession(
 
     init { imuThread?.start() }
 
+    override fun queryImuProtocolResponse() = usb.imuProtocolResponse
+
     @Synchronized
     private fun ensureMcuReady() {
         if (mcuReady) return

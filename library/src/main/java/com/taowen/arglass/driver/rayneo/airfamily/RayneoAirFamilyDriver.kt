@@ -26,6 +26,9 @@ internal object RayneoAirFamilyDriver : GlassesDriver {
                 capabilities = setOf(GlassesCapability.IMU, GlassesCapability.DISPLAY_RESOLUTION),
                 driverId = id,
                 showInArctrlDisplayModeToggle = false,
+                // Cadence remains absent until the mandatory board probe resolves it.
+                imuInputContract = com.taowen.arglass.ImuInputContract(
+                    com.taowen.arglass.ImuInputEncoding.RUNTIME_SI),
                 imuTrackingSupport = ImuTrackingSupport(
                     axisCount = 9,
                     // The shared descriptor cannot establish a supported board. The mandatory
