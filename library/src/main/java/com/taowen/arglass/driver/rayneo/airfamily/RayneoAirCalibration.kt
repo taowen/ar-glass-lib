@@ -17,14 +17,15 @@ import kotlin.math.sqrt
 
 internal data class RayneoFactoryCalibration(
     val sensorTransform: FloatArray,
-    val gyroscopeBiasRadiansPerSecond: FloatArray,
+    val accelerometerAdditiveOffsetMetersPerSecondSquared: FloatArray,
     val gyroscopeTemperatureBiases: List<RayneoGyroscopeTemperatureBias> = emptyList(),
     val rawFactoryPayload: ByteArray? = null,
     val rawGyroscopeTemperaturePayloads: List<ByteArray> = emptyList(),
+    val packageIsRuntimeFrame: Boolean = false,
 ) {
     init {
         require(sensorTransform.size == 9)
-        require(gyroscopeBiasRadiansPerSecond.size == 3)
+        require(accelerometerAdditiveOffsetMetersPerSecondSquared.size == 3)
     }
 
     fun publicData(magnetic: RayneoMagneticCalibration? = null): ImuCalibrationData {
@@ -36,16 +37,18 @@ internal data class RayneoFactoryCalibration(
                 gyroscope = ImuCalibrationLevel.FACTORY,
                 magnetometer = if (magneticReady) ImuCalibrationLevel.HOST_ESTIMATED else ImuCalibrationLevel.NONE,
             ),
-            // Calibrator3dof::Conduct in the RayNeo 2.0.6 and 2.1.1 runtimes computes
-            // accel'=M*accel and gyro'=M*(gyroRadPerSecond-bias). There is no
-            // accelerometer offset in the 12-float 0x3c AB record.
-            accelerometerBiasMetersPerSecondSquared = FloatArray(3),
-            gyroscopeBiasRadiansPerSecond = toRuntimeFrame(transform(gyroscopeBiasRadiansPerSecond)),
-            magnetometerBias = magnetic?.bias?.copyOf(),
+            // RayNeo 2.1.1 UpdateImuCalibrateInfo (0x926c8) copies the
+            // last three 0x3c floats to AB+0x24, and clears gyro bias at
+            // AB+0x30. Conduct (0x7df0c) computes a'=M*a+b, g'=M*g.
+            // Our public contract is M*x-bias: publish -R*b, NOT -R*M*b.
+            accelerometerBiasMetersPerSecondSquared =
+                runtimeVector(accelerometerAdditiveOffsetMetersPerSecondSquared).map { -it }.toFloatArray(),
+            gyroscopeBiasRadiansPerSecond = FloatArray(3),
+            magnetometerBias = magnetic?.biasAfterCorrection(),
             gyroscopeTemperatureBiases = gyroscopeTemperatureBiases.map {
                 TemperatureGyroscopeBias(
                     it.temperatureCelsius,
-                    toRuntimeFrame(transform(it.biasRadiansPerSecond)),
+                    runtimeVector(transform(it.biasRadiansPerSecond)),
                 )
             },
             accelerometerCorrectionMatrix = runtimeCorrectionMatrix(),
@@ -75,9 +78,13 @@ internal data class RayneoFactoryCalibration(
         sensorTransform[2], sensorTransform[5], sensorTransform[8],
     )
 
-    /** R*M*R^-1, where R maps RayNeo package vectors [x,y,z] to [x,-z,y]. */
+    private fun runtimeVector(value: FloatArray): FloatArray =
+        if (packageIsRuntimeFrame) value.copyOf() else toRuntimeFrame(value)
+
+    /** R*M*R^-1 using the same board-specific R as sample decoding. */
     private fun runtimeCorrectionMatrix(): FloatArray {
         val packageMatrix = packageCorrectionMatrix()
+        if (packageIsRuntimeFrame) return packageMatrix
         return FloatArray(9) { index ->
             val row = index / 3
             val column = index % 3
@@ -115,6 +122,13 @@ internal data class RayneoMagneticCalibration(
     val bias: FloatArray,
     val correctionMatrix: FloatArray,
 ) {
+    /** Public ImuCalibrationData uses M*raw - bias, while the fit stores M*(raw-b). */
+    fun biasAfterCorrection(): FloatArray = FloatArray(3) { output ->
+        correctionMatrix[output * 3] * bias[0] +
+            correctionMatrix[output * 3 + 1] * bias[1] +
+            correctionMatrix[output * 3 + 2] * bias[2]
+    }
+
     fun apply(raw: FloatArray): FloatArray {
         val centered = FloatArray(3) { raw[it] - bias[it] }
         return FloatArray(3) { output ->
@@ -131,7 +145,7 @@ internal data class RayneoMagneticCalibration(
         ),
         accelerometerBiasMetersPerSecondSquared = FloatArray(3),
         gyroscopeBiasRadiansPerSecond = FloatArray(3),
-        magnetometerBias = bias.copyOf(),
+        magnetometerBias = biasAfterCorrection(),
         magnetometerCorrectionMatrix = correctionMatrix.copyOf(),
         parametersAppliedToSamples = false,
     )

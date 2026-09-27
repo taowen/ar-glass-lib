@@ -8,6 +8,7 @@ import android.hardware.usb.UsbManager
 import com.taowen.arglass.ArGlassesListener
 import com.taowen.arglass.GlassesCapability
 import com.taowen.arglass.GlassesModel
+import com.taowen.arglass.GlassesTangentFov
 import com.taowen.arglass.ImuCalibrationData
 import com.taowen.arglass.ImuCalibrationLevel
 import com.taowen.arglass.ImuCalibrationSource
@@ -15,6 +16,7 @@ import com.taowen.arglass.ImuCalibrationState
 import com.taowen.arglass.ImuHostCalibrationPhase
 import com.taowen.arglass.ImuTrackingSupport
 import com.taowen.arglass.ImuSample
+import com.taowen.arglass.ImuTransportMetadata
 import com.taowen.arglass.driver.DriverSession
 import com.taowen.arglass.driver.NativeUsbDeviceSession
 import com.taowen.arglass.driver.rayneo.RayneoMagneticCalibrationStore
@@ -25,6 +27,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
+import kotlin.math.tan
 
 internal enum class RayneoUsbProtocol(
     val interfaceId: Int,
@@ -80,7 +83,12 @@ internal class RayneoAirFamilySession(
         ?: "${device.vendorId}:${device.productId}:${device.productName.orEmpty()}"
 
     @Volatile private var magnetometerAvailable: Boolean? = null
+    @Volatile private var supportsPanelFov = false
+    @Volatile private var panelFov: GlassesTangentFov? = null
+    private val panelFovReady = CountDownLatch(1)
+    private var panelFovRequested = false
     @Volatile private var factoryCalibration: RayneoFactoryCalibration? = null
+    @Volatile private var packageIsRuntimeFrame = false
     @Volatile private var magneticCalibration: RayneoMagneticCalibration? = null
     @Volatile private var magneticCalibrationStoreKey: String? = null
     private val streamStarted = AtomicBoolean(false)
@@ -142,6 +150,15 @@ internal class RayneoAirFamilySession(
         }
     }
 
+    override fun requestMonoLayout(): Boolean {
+        if (!packageIsRuntimeFrame) return false // verified Air4 board 0x39 only
+        // RayNeoXR 2.1.1 libFFalconXRServer: XRService::SwitchTo2D at
+        // 0x5a434, SendHidCommand(7, 0, {}) at 0x5a480..0x5a490.
+        // A successful USB write is NOT a mode/readback or refresh-rate ACK.
+        send(0x07)
+        return true
+    }
+
     private fun send(command: Int, parameter: Int = 0, payload: ByteArray = byteArrayOf()) {
         require(payload.size <= 61) { "RayNeo HID command payload is too large" }
         val packet = ByteArray(64).also {
@@ -150,7 +167,7 @@ internal class RayneoAirFamilySession(
             it[2] = parameter.toByte()
             payload.copyInto(it, destinationOffset = 3)
         }
-        check(usb.transfer(port.output, packet, 500) >= 0) {
+        check(usb.transfer(port.output, packet, 500) == packet.size) {
             "RayNeo command 0x${command.toString(16)} failed"
         }
     }
@@ -177,13 +194,21 @@ internal class RayneoAirFamilySession(
             COMMAND_DEVICE_INFO -> decodeDeviceInfo(packet)
             COMMAND_IMU_CALIBRATION -> decodeFactoryCalibration(packet)
             COMMAND_GYROSCOPE_TEMPERATURE_BIASES -> decodeGyroscopeTemperatureBiases(packet)
+            COMMAND_PANEL_FOV -> decodePanelFov(packet)
         }
     }
 
     private fun decodeDeviceInfo(packet: ByteArray) {
         if (!deviceInfoHandled.compareAndSet(false, true)) return
         val boardId = packet[BOARD_ID_OFFSET].toInt() and 0xff
-        magneticCalibrationStoreKey = "$physicalDeviceKey:$boardId"
+        // Board 0x39 wearer capture: yaw and gravity are package Y; pitch
+        // is package X. The SDK legacy fusion's [x,-z,y] is an internal
+        // engine basis, not this library's right/up/back sample contract.
+        // Do not extrapolate this measured mounting to other boards.
+        packageIsRuntimeFrame = protocol == RayneoUsbProtocol.TAURUS && boardId == BOARD_AIR_4
+        supportsPanelFov = packet[23].toInt() == 1
+        magneticCalibrationStoreKey = "$physicalDeviceKey:$boardId" +
+            if (packageIsRuntimeFrame) ":runtime-axes-v2" else ""
         val detectedModel = when (boardId) {
             BOARD_AIR_3 -> "Air 3"
             BOARD_AIR_3S -> "Air 3s"
@@ -205,7 +230,16 @@ internal class RayneoAirFamilySession(
             deviceInfoReady.countDown()
             return
         }
-        magnetometerAvailable = packet[MAGNETOMETER_VALID_OFFSET].toInt() != 0
+        val reportedMagnetometerValid = packet[MAGNETOMETER_VALID_OFFSET].toInt() != 0
+        // Air 4 board 0x39 returns zero in all four sensor-valid bytes even while
+        // gyro and magnetic data are updating. Do not use that byte as a hardware
+        // inventory. The 20260109 Taurus 4 firmware registers its magnetic driver
+        // at 0x08013370; 0x0801a760 refreshes its cached XYZ every fifth IMU poll.
+        // Confirmed on board 0x39 with changing 99 65 floats at 32/36/52 while
+        // device-info[51] remains zero. Keep other boards' existing policy until
+        // independently verified; a shared firmware image is not a board probe.
+        val air4MagneticReport = protocol == RayneoUsbProtocol.TAURUS && boardId == BOARD_AIR_4
+        magnetometerAvailable = reportedMagnetometerValid || air4MagneticReport
         if (magnetometerAvailable == true && magneticCalibration == null) {
             RayneoMagneticCalibrationStore.load(requireNotNull(magneticCalibrationStoreKey))?.let { saved ->
                 magneticCalibration = saved
@@ -218,7 +252,11 @@ internal class RayneoAirFamilySession(
                 append("RayNeo ")
                 append(detectedModel)
                 append(" (board 0x${boardId.toString(16).padStart(2, '0')}) ")
-                append(if (magnetometerAvailable == true) "已确认磁力计有效" else "报告磁力计不可用")
+                append(when {
+                    reportedMagnetometerValid -> "设备报告磁力计有效"
+                    air4MagneticReport -> "磁力计有效位为 0，按已验证的 Air 4 原始磁场报文解码"
+                    else -> "报告磁力计不可用"
+                })
             },
         )
         resolvedModel = resolvedModel(detectedModel, boardId)
@@ -243,8 +281,9 @@ internal class RayneoAirFamilySession(
         }
         factoryCalibration = RayneoFactoryCalibration(
             sensorTransform = values.copyOfRange(0, 9),
-            gyroscopeBiasRadiansPerSecond = values.copyOfRange(9, 12),
+            accelerometerAdditiveOffsetMetersPerSecondSquared = values.copyOfRange(9, 12),
             rawFactoryPayload = packet.copyOf(),
+            packageIsRuntimeFrame = packageIsRuntimeFrame,
         ).also { calibration ->
             if (!protocol.readsGyroscopeTemperatureBiases) {
                 executor.execute { listener.onImuCalibration(calibration.publicData(magneticCalibration)) }
@@ -252,6 +291,35 @@ internal class RayneoAirFamilySession(
         }
         factoryCalibrationReady.countDown()
         status("${resolvedModel?.displayName} 已发布 USB 0x3c IMU 工厂校准；样本保持协议解码后的 SI 数值；请绕三轴旋转以校准磁力计")
+    }
+
+    @Synchronized
+    override fun queryCenterTangentFov(): GlassesTangentFov? {
+        if (!supportsPanelFov || !running.get()) return null
+        if (panelFovRequested) return panelFov
+        send(COMMAND_PANEL_FOV)
+        panelFovRequested = true
+        if (!panelFovReady.await(DEVICE_INFO_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+            status("${resolvedModel?.displayName} 未返回 0x23 显示 FOV，不使用其他型号参数")
+            return null
+        }
+        return panelFov
+    }
+
+    private fun decodePanelFov(packet: ByteArray) {
+        // Official XrHidDeviceFov and XRService::UpdateDeviceFov, Android
+        // RayNeoXR 2.1.1 libFFalconXRServer.so 0x924f8: unsigned LE16 fields
+        // at 9/11/13/15 divided by 10 give left/right/up/down half-angles.
+        val buffer = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
+        val degrees = FloatArray(4) { (buffer.getShort(9 + it * 2).toInt() and 0xffff) / 10f }
+        if (degrees.all { it > 0f && it < 90f }) {
+            val tangents = FloatArray(4) { tan(degrees[it] * PI / 180.0).toFloat() }
+            panelFov = GlassesTangentFov(-tangents[0], tangents[1], tangents[2], -tangents[3])
+            status("${resolvedModel?.displayName} USB FOV 半角 L/R/U/D=${degrees.joinToString()}")
+        } else {
+            status("${resolvedModel?.displayName} USB FOV 无效 L/R/U/D=${degrees.joinToString()}")
+        }
+        panelFovReady.countDown()
     }
 
     @Synchronized
@@ -348,6 +416,9 @@ internal class RayneoAirFamilySession(
         )
     }
 
+    private fun sampleRuntimeFrame(value: FloatArray): FloatArray =
+        if (packageIsRuntimeFrame) value.copyOf() else toRuntimeFrame(value)
+
     private fun decodeImu(packet: ByteArray, hostTimestampNanos: Long): ImuSample? {
         if (!streamStarted.get()) return null
         val buffer = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
@@ -357,22 +428,29 @@ internal class RayneoAirFamilySession(
         if ((rawAcceleration + rawGyroscope).any { !it.isFinite() } || !temperatureCelsius.isFinite()) return null
         val rawMagnetic = if (magnetometerAvailable == true) {
             floatArrayOf(buffer.getFloat(32), buffer.getFloat(36), buffer.getFloat(52))
-                .takeIf { value -> value.all(Float::isFinite) }
+                .takeIf { value -> value.all(Float::isFinite) && value.any { it != 0f } }
         } else {
             null
         }
 
         val radiansPerDegree = (PI / 180.0).toFloat()
-        val acceleration = toRuntimeFrame(rawAcceleration)
-        val angularVelocity = toRuntimeFrame(FloatArray(3) { rawGyroscope[it] * radiansPerDegree })
+        val acceleration = sampleRuntimeFrame(rawAcceleration)
+        val angularVelocity = sampleRuntimeFrame(FloatArray(3) { rawGyroscope[it] * radiansPerDegree })
         // The official HID legacy-fusion path proves [x,-z,y] for accelerometer and gyroscope but
         // does not submit the 99 65 magnetometer fields to its nine-axis fusion object. RayNeo's
         // report exposes all three sensors as one package-coordinate record, so use the same rigid
-        // package-to-runtime rotation here; keep rawReport below for future hardware verification.
-        val magneticField = rawMagnetic?.let(::toRuntimeFrame)
+        // board-specific package-to-runtime rotation here; keep rawReport below for verification.
+        // Taurus 4's 0x0801a6e4..0x0801a74c converts unsigned 16-bit magnetic
+        // counts as (count - 32768) / 1024 * 100, including package-axis signs.
+        // This already converts gauss to microteslas; do not scale it a second time.
+        // Matches MMC5603NJ Rev.B (2022-01-17), p2: 16-bit zero=32768,
+        // sensitivity=1024 counts/G; the firmware also checks reg 0x39 == 0x10.
+        val magneticField = rawMagnetic?.let(::sampleRuntimeFrame)
 
+        var magneticUsable = false
         if (magneticField != null) {
             val update = magneticCalibrator.update(magneticField)
+            magneticUsable = update.usable
             reportMagneticProgress(update)
             val next = update.calibration
             if (next != null && magneticCalibration == null) {
@@ -391,6 +469,10 @@ internal class RayneoAirFamilySession(
             temperatureCelsius = temperatureCelsius,
             reportVersion = 1,
             hostTimestampNanos = hostTimestampNanos,
+            // Driver eligibility mask, not a byte copied from the HID report.
+            // Preserve raw magnetic values for diagnosis, but do not offer a
+            // rejected disturbance to consumers. Freshness remains unknown.
+            transportMetadata = ImuTransportMetadata(dataMask = if (magneticUsable) 7 else 3),
             rawReport = packet.copyOf(64),
         )
     }
@@ -454,6 +536,7 @@ internal class RayneoAirFamilySession(
         const val COMMAND_IMU_ON = 0x01
         const val COMMAND_IMU_OFF = 0x02
         const val COMMAND_IMU_CALIBRATION = 0x3c
+        const val COMMAND_PANEL_FOV = 0x23
         const val COMMAND_GYROSCOPE_TEMPERATURE_BIASES = 0x3e
         const val COMMAND_IMU_DATA = 0x65
         const val COMMAND_ACK = 0xc8

@@ -75,6 +75,8 @@ internal interface CompositeGlassesDriver : GlassesDriver {
 }
 
 internal interface DriverSession : Closeable {
+    /** Layout-only command where the protocol cannot report a complete display profile. */
+    fun requestMonoLayout(): Boolean = false
     /** More precise model information learned only after a permission-gated protocol probe. */
     val resolvedModel: GlassesModel? get() = null
     fun resetHostImuCalibration(): Boolean = false

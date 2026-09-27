@@ -237,6 +237,7 @@ class ArGlassesSession internal constructor(
     private val invalidateCallbacks: () -> Unit,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
+    internal fun requestMonoLayout(): Boolean = delegate.requestMonoLayout()
     fun queryCenterTangentFov(): GlassesTangentFov? =
         delegate.queryCenterTangentFov().also {
             ArGlassesDiagnostics.recordEvent(
